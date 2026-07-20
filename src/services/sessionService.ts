@@ -3,6 +3,12 @@ import { prisma } from "../utils/prisma";
 import { HttpError } from "../utils/httpError";
 import { createNotificationService } from "./notificationsService";
 import { spendCredits } from "./creditService";
+import { emitToUser } from "../sockets";
+
+const emitSessionUpdate = (session: { id: string; teacherId: string; learnerId: string; status: string }): void => {
+  emitToUser(session.teacherId, "session:update", session);
+  emitToUser(session.learnerId, "session:update", session);
+};
 
 export const createSessionService = async (
   teacherId: string,
@@ -35,6 +41,8 @@ export const createSessionService = async (
     "SESSION_BOOKED",
     `Proposition de session "${title}" reçue. ${estimatedDuration} crédits requis pour accepter. Acceptez ou refusez.`
   ).catch(() => {});
+
+  emitSessionUpdate(session);
 
   return session;
 };
@@ -89,6 +97,13 @@ export const endSessionService = async (
     }),
   ]);
 
+  emitSessionUpdate({
+    id: sessionId,
+    teacherId: session.teacherId,
+    learnerId: session.learnerId,
+    status: "COMPLETED",
+  });
+
   return { teacherCreditsPaid, learnerCreditsRefunded };
 };
 
@@ -120,6 +135,12 @@ export const joinSessionService = async (
     await prisma.teachingSession.update({
       where: { id: sessionId },
       data: { status: "ACTIVE", actualStartedAt: new Date() },
+    });
+    emitSessionUpdate({
+      id: sessionId,
+      teacherId: session.teacherId,
+      learnerId: session.learnerId,
+      status: "ACTIVE",
     });
   }
   return session.jitsiRoomId;
@@ -164,6 +185,13 @@ export const acceptSessionService = async (
     `Votre session "${session.title}" a été acceptée.`
   ).catch(() => {});
 
+  emitSessionUpdate({
+    id: sessionId,
+    teacherId: session.teacherId,
+    learnerId: session.learnerId,
+    status: updated.status,
+  });
+
   return updated;
 };
 
@@ -199,6 +227,13 @@ export const refuseSessionService = async (
     "SESSION_REFUSED",
     `Votre session "${session.title}" a été refusée par l'apprenant.`
   ).catch(() => {});
+
+  emitSessionUpdate({
+    id: sessionId,
+    teacherId: session.teacherId,
+    learnerId: session.learnerId,
+    status: updated.status,
+  });
 
   return updated;
 };
@@ -301,6 +336,13 @@ export const updateSessionService = async (
     "SESSION_BOOKED",
     `La session "${updated.title}" a été modifiée. ${updated.creditsReserved} crédits requis pour accepter. Confirmez ou refusez.`
   ).catch(() => {});
+
+  emitSessionUpdate({
+    id: sessionId,
+    teacherId: session.teacherId,
+    learnerId: session.learnerId,
+    status: updated.status,
+  });
 
   return updated;
 };

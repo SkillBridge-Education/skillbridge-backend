@@ -1,6 +1,7 @@
 import { prisma } from "../utils/prisma";
 import { HttpError } from "../utils/httpError";
 import { createNotificationService } from "./notificationsService";
+import { emitToUser } from "../sockets";
 
 /**
  * Returns all conversations the user participates in, with the last message
@@ -152,6 +153,10 @@ export const createMessageService = async (
     `Nouveau message de ${message.sender.firstName} ${message.sender.lastName}.`
   ).catch(() => {});
 
+  // Emit to both participants so every open tab/device stays in sync.
+  emitToUser(recipientId, "message:new", { conversationId, message });
+  emitToUser(userId, "message:new", { conversationId, message });
+
   return message;
 };
 
@@ -223,7 +228,7 @@ export const sendFileMessageService = async (
     throw new HttpError(400, "File URL cannot be empty");
   }
 
-  return prisma.message.create({
+  const message = await prisma.message.create({
     data: {
       conversationId,
       senderId: userId,
@@ -235,4 +240,13 @@ export const sendFileMessageService = async (
       sender: { select: { id: true, firstName: true, lastName: true } },
     },
   });
+
+  const recipientId =
+    conversation.firstUserId === userId
+      ? conversation.secondUserId
+      : conversation.firstUserId;
+  emitToUser(recipientId, "message:new", { conversationId, message });
+  emitToUser(userId, "message:new", { conversationId, message });
+
+  return message;
 };

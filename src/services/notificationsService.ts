@@ -1,6 +1,7 @@
 import { prisma } from "../utils/prisma";
 import { HttpError } from "../utils/httpError";
 import { NotificationType } from "@prisma/client";
+import { emitToUser } from "../sockets";
 
 export const createNotificationService = async (
     userID : string,
@@ -14,6 +15,11 @@ export const createNotificationService = async (
             type: type,
         }
     });
+
+    // Every notification path (messages, sessions, matches, ...) funnels through
+    // here, so this is the single place that needs to emit the realtime event.
+    emitToUser(userID, "notification:new", notification);
+
     return notification;
 };
 
