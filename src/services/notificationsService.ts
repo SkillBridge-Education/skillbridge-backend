@@ -1,5 +1,4 @@
 import { prisma } from "../utils/prisma";
-import { HttpError } from "../utils/httpError";
 import { NotificationType } from "@prisma/client";
 import { emitToUser } from "../sockets";
 

@@ -1,6 +1,5 @@
 import { Request, Response, NextFunction } from "express";
 import { HttpError } from "../utils/httpError";
-import { NotificationType } from "@prisma/client";
 import {
   createNotificationService,
   getNotificationsService,
