@@ -15,6 +15,7 @@ API REST + temps réel (Socket.IO) pour la plateforme de troc de savoirs peer-to
 | JWT | — | Authentification |
 | bcrypt | — | Hash des mots de passe |
 | Vitest + Supertest | — | Tests |
+| pnpm | 11 | Gestionnaire de paquets |
 
 ## Lancer en local
 
@@ -23,18 +24,19 @@ API REST + temps réel (Socket.IO) pour la plateforme de troc de savoirs peer-to
 git clone https://github.com/abidinetou-lgtm/skillbridge-backend.git
 cd skillbridge-backend
 
-# Installer
-npm install
+# Installer (corepack fournit pnpm avec Node 22+)
+corepack enable
+pnpm install
 
 # Configurer l'environnement
 cp .env.example .env
 # Remplir DATABASE_URL et JWT_SECRET
 
 # Créer et migrer la DB
-npx prisma migrate dev --name init
+pnpm exec prisma migrate dev --name init
 
 # Lancer
-npm run dev
+pnpm dev
 # → http://localhost:5000
 # → Test : http://localhost:5000/
 ```
@@ -42,7 +44,7 @@ npm run dev
 ## Tests
 
 ```bash
-npm test
+pnpm test
 ```
 
 Les tests (`src/__tests__/`) sont des tests d'intégration Vitest + Supertest qui
@@ -289,7 +291,7 @@ FRONTEND_URL, GMAIL_USER, GMAIL_APP_PASSWORD, REQUIRE_EMAIL_VERIFICATION
 
 **Pre-deploy command dans Coolify :**
 ```bash
-npx prisma migrate deploy
+pnpm exec prisma migrate deploy
 ```
 
 ## Équipe

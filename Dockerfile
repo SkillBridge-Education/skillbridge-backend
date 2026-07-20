@@ -1,10 +1,10 @@
 FROM node:22-alpine
 WORKDIR /app
-RUN npm config set fetch-retries 5
-COPY package*.json ./
-RUN rm -f package-lock.json && npm install --legacy-peer-deps
+RUN corepack enable
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile
 COPY . .
-RUN npx prisma generate
-RUN npm run build
+RUN pnpm exec prisma generate
+RUN pnpm run build
 EXPOSE 5000
 CMD ["node", "dist/server.js"]
