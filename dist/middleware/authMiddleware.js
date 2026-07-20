@@ -4,6 +4,7 @@ exports.authorizeRoles = exports.authenticate = void 0;
 const client_1 = require("@prisma/client");
 const jwt_1 = require("../utils/jwt");
 const prisma_1 = require("../utils/prisma");
+const env_1 = require("../utils/env");
 const authenticate = async (req, res, next) => {
     const authHeader = req.headers.authorization;
     if (!authHeader?.startsWith("Bearer ")) {
@@ -26,7 +27,7 @@ const authenticate = async (req, res, next) => {
             res.status(401).json({ message: "Invalid or expired token" });
             return;
         }
-        if (!user.isEmailVerified) {
+        if (env_1.env.requireEmailVerification && !user.isEmailVerified) {
             res.status(403).json({ message: "Please verify your email address before signing in." });
             return;
         }

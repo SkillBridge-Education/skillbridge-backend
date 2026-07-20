@@ -4,6 +4,7 @@ exports.updateMatchStatus = exports.getMyMatches = exports.requestMatch = export
 const client_1 = require("@prisma/client");
 const httpError_1 = require("../utils/httpError");
 const prisma_1 = require("../utils/prisma");
+const notificationsService_1 = require("./notificationsService");
 const skillSelect = {
     id: true,
     name: true,
@@ -151,9 +152,6 @@ const getMatchSuggestions = async (userId) => {
             ...matchedUserSelect,
             teachingSkills: {
                 where: {
-                    skillId: {
-                        in: learningSkillIds
-                    },
                     skill: {
                         isActive: true
                     }
@@ -206,7 +204,7 @@ const requestMatch = async (input) => {
     if (existing) {
         throw new httpError_1.HttpError(409, "Match request already exists");
     }
-    return prisma_1.prisma.match.create({
+    const match = await prisma_1.prisma.match.create({
         data: {
             requesterId: input.requesterId,
             receiverId,
@@ -215,6 +213,9 @@ const requestMatch = async (input) => {
         },
         select: matchSelect
     });
+    // Notifier le destinataire d'une nouvelle demande de connexion
+    (0, notificationsService_1.createNotificationService)(receiverId, "CONNECTION_REQUEST", `${match.requester.firstName} ${match.requester.lastName} veut se connecter avec vous.`).catch(() => { });
+    return match;
 };
 exports.requestMatch = requestMatch;
 const getMyMatches = async (userId) => {
@@ -271,10 +272,15 @@ const updateMatchStatus = async (userId, matchId, status) => {
                     secondUserId
                 }
             });
-            return tx.match.findUnique({
+            const acceptedMatch = await tx.match.findUnique({
                 where: { id: matchId },
                 select: matchSelect
             });
+            // Notifier le demandeur que sa demande a été acceptée
+            if (acceptedMatch) {
+                (0, notificationsService_1.createNotificationService)(match.requesterId, "CONNECTION_ACCEPTED", `${acceptedMatch.receiver.firstName} ${acceptedMatch.receiver.lastName} a accepté votre demande de connexion.`).catch(() => { });
+            }
+            return acceptedMatch;
         }
         return updated;
     });

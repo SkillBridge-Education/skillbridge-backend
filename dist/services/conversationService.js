@@ -1,8 +1,10 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.createMessageService = exports.listMessagesService = exports.getConversationService = exports.listConversationsService = void 0;
+exports.sendFileMessageService = exports.deleteConversationService = exports.unarchiveConversationService = exports.archiveConversationService = exports.createMessageService = exports.listMessagesService = exports.getConversationService = exports.listConversationsService = void 0;
 const prisma_1 = require("../utils/prisma");
 const httpError_1 = require("../utils/httpError");
+const notificationsService_1 = require("./notificationsService");
+const sockets_1 = require("../sockets");
 /**
  * Returns all conversations the user participates in, with the last message
  * and the "other" participant pre-computed for the UI.
@@ -17,10 +19,10 @@ const listConversationsService = async (userId) => {
         },
         include: {
             firstUser: {
-                select: { id: true, firstName: true, lastName: true },
+                select: { id: true, firstName: true, lastName: true, avatarUrl: true },
             },
             secondUser: {
-                select: { id: true, firstName: true, lastName: true },
+                select: { id: true, firstName: true, lastName: true, avatarUrl: true },
             },
             messages: {
                 orderBy: { createdAt: "desc" },
@@ -110,7 +112,7 @@ const createMessageService = async (conversationId, userId, body) => {
     if (!body || body.trim() === "") {
         throw new httpError_1.HttpError(400, "Message body cannot be empty");
     }
-    return prisma_1.prisma.message.create({
+    const message = await prisma_1.prisma.message.create({
         data: {
             conversationId,
             senderId: userId,
@@ -120,6 +122,90 @@ const createMessageService = async (conversationId, userId, body) => {
             sender: { select: { id: true, firstName: true, lastName: true } },
         },
     });
+    // Notifier l'autre participant
+    const recipientId = conversation.firstUserId === userId
+        ? conversation.secondUserId
+        : conversation.firstUserId;
+    (0, notificationsService_1.createNotificationService)(recipientId, "MESSAGE_RECEIVED", `Nouveau message de ${message.sender.firstName} ${message.sender.lastName}.`).catch(() => { });
+    // Emit to both participants so every open tab/device stays in sync.
+    (0, sockets_1.emitToUser)(recipientId, "message:new", { conversationId, message });
+    (0, sockets_1.emitToUser)(userId, "message:new", { conversationId, message });
+    return message;
 };
 exports.createMessageService = createMessageService;
+const archiveConversationService = async (conversationId, userId) => {
+    const conversation = await prisma_1.prisma.conversation.findUnique({
+        where: { id: conversationId },
+    });
+    if (!conversation)
+        throw new httpError_1.HttpError(404, "Conversation not found");
+    if (conversation.firstUserId !== userId && conversation.secondUserId !== userId) {
+        throw new httpError_1.HttpError(403, "Forbidden");
+    }
+    return prisma_1.prisma.conversation.update({
+        where: { id: conversationId },
+        data: { status: "ARCHIVED" },
+    });
+};
+exports.archiveConversationService = archiveConversationService;
+const unarchiveConversationService = async (conversationId, userId) => {
+    const conversation = await prisma_1.prisma.conversation.findUnique({
+        where: { id: conversationId },
+    });
+    if (!conversation)
+        throw new httpError_1.HttpError(404, "Conversation not found");
+    if (conversation.firstUserId !== userId && conversation.secondUserId !== userId) {
+        throw new httpError_1.HttpError(403, "Forbidden");
+    }
+    return prisma_1.prisma.conversation.update({
+        where: { id: conversationId },
+        data: { status: "ACTIVE" },
+    });
+};
+exports.unarchiveConversationService = unarchiveConversationService;
+const deleteConversationService = async (conversationId, userId) => {
+    const conversation = await prisma_1.prisma.conversation.findUnique({
+        where: { id: conversationId },
+    });
+    if (!conversation)
+        throw new httpError_1.HttpError(404, "Conversation not found");
+    if (conversation.firstUserId !== userId && conversation.secondUserId !== userId) {
+        throw new httpError_1.HttpError(403, "Forbidden");
+    }
+    await prisma_1.prisma.conversation.delete({ where: { id: conversationId } });
+};
+exports.deleteConversationService = deleteConversationService;
+const sendFileMessageService = async (conversationId, userId, fileUrl) => {
+    const conversation = await prisma_1.prisma.conversation.findUnique({
+        where: { id: conversationId },
+    });
+    if (!conversation)
+        throw new httpError_1.HttpError(404, "Conversation not found");
+    if (conversation.firstUserId !== userId &&
+        conversation.secondUserId !== userId) {
+        throw new httpError_1.HttpError(403, "Forbidden");
+    }
+    if (!fileUrl) {
+        throw new httpError_1.HttpError(400, "File URL cannot be empty");
+    }
+    const message = await prisma_1.prisma.message.create({
+        data: {
+            conversationId,
+            senderId: userId,
+            body: fileUrl,
+            fileUrl: fileUrl.trim(),
+            type: "FILE",
+        },
+        include: {
+            sender: { select: { id: true, firstName: true, lastName: true } },
+        },
+    });
+    const recipientId = conversation.firstUserId === userId
+        ? conversation.secondUserId
+        : conversation.firstUserId;
+    (0, sockets_1.emitToUser)(recipientId, "message:new", { conversationId, message });
+    (0, sockets_1.emitToUser)(userId, "message:new", { conversationId, message });
+    return message;
+};
+exports.sendFileMessageService = sendFileMessageService;
 //# sourceMappingURL=conversationService.js.map

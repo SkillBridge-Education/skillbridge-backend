@@ -1,7 +1,8 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.search = exports.deleteLearningGoal = exports.createLearningGoal = exports.deleteSkill = exports.createSkill = exports.getById = exports.updateMe = exports.getMe = void 0;
+exports.search = exports.deleteLearningGoal = exports.createLearningGoal = exports.deleteSkill = exports.createSkill = exports.getRatingSummary = exports.getRatings = exports.getById = exports.updateMe = exports.getMe = void 0;
 const userService_1 = require("../services/userService");
+const ratingService_1 = require("../services/ratingService");
 const httpError_1 = require("../utils/httpError");
 const requestHelpers_1 = require("../utils/requestHelpers");
 const profileValidation_1 = require("../utils/profileValidation");
@@ -45,6 +46,26 @@ const getById = async (req, res, next) => {
     }
 };
 exports.getById = getById;
+const getRatings = async (req, res, next) => {
+    try {
+        const ratings = await (0, ratingService_1.getUserRatings)(getRouteId(req));
+        res.status(200).json(ratings);
+    }
+    catch (error) {
+        next(error);
+    }
+};
+exports.getRatings = getRatings;
+const getRatingSummary = async (req, res, next) => {
+    try {
+        const summary = await (0, ratingService_1.getUserRatingSummary)(getRouteId(req));
+        res.status(200).json(summary);
+    }
+    catch (error) {
+        next(error);
+    }
+};
+exports.getRatingSummary = getRatingSummary;
 const createSkill = async (req, res, next) => {
     try {
         const userId = (0, requestHelpers_1.getAuthenticatedUserId)(req);

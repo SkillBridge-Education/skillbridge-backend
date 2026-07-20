@@ -10,6 +10,8 @@ router.get("/search", userController_1.search);
 router.get("/me", authMiddleware_1.authenticate, userController_1.getMe);
 router.put("/me", authMiddleware_1.authenticate, userController_1.updateMe);
 router.patch("/me", authMiddleware_1.authenticate, userController_1.updateMe);
+router.get("/:id/ratings", authMiddleware_1.authenticate, userController_1.getRatings);
+router.get("/:id/rating-summary", authMiddleware_1.authenticate, userController_1.getRatingSummary);
 router.get("/:id", userController_1.getById);
 router.post("/skills", authMiddleware_1.authenticate, userController_1.createSkill);
 router.delete("/skills/:id", authMiddleware_1.authenticate, userController_1.deleteSkill);

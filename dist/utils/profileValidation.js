@@ -36,6 +36,7 @@ const parseUpdateProfileInput = (body) => {
         lastName,
         bio: optionalTrimmedString(body.bio, "bio", MAX_LONG_TEXT_LENGTH),
         avatarUrl: optionalTrimmedString(body.avatarUrl, "avatarUrl", 500),
+        bannerUrl: optionalTrimmedString(body.bannerUrl, "bannerUrl", 500),
         availability: optionalTrimmedString(body.availability, "availability", 2000),
     };
     if (Object.values(input).every((value) => value === undefined)) {
