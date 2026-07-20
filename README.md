@@ -1,6 +1,6 @@
 # SkillBridge — Backend
 
-API REST pour la plateforme de troc de savoirs peer-to-peer.
+API REST + temps réel (Socket.IO) pour la plateforme de troc de savoirs peer-to-peer.
 
 ## Stack
 
@@ -8,12 +8,13 @@ API REST pour la plateforme de troc de savoirs peer-to-peer.
 |---|---|---|
 | Node.js | 18+ | Runtime |
 | TypeScript | 6 | Typage |
-| Express | 4 | Framework HTTP |
-| Prisma | 5 | ORM |
+| Express | 5 | Framework HTTP |
+| Prisma | 7 | ORM |
 | PostgreSQL | 15 | Base de données |
-| Socket.IO | 4 | Temps réel (chat) |
+| Socket.IO | 4 | Temps réel (chat, notifications, sessions) |
 | JWT | — | Authentification |
-| bcryptjs | — | Hash des mots de passe |
+| bcrypt | — | Hash des mots de passe |
+| Vitest + Supertest | — | Tests |
 
 ## Lancer en local
 
@@ -35,22 +36,42 @@ npx prisma migrate dev --name init
 # Lancer
 npm run dev
 # → http://localhost:5000
-# → Test : http://localhost:5000/health
+# → Test : http://localhost:5000/
 ```
+
+## Tests
+
+```bash
+npm test
+```
+
+Les tests (`src/__tests__/`) sont des tests d'intégration Vitest + Supertest qui
+tournent contre l'app Express en mémoire, avec la base PostgreSQL configurée par
+`DATABASE_URL`. Les utilisateurs créés pendant les tests utilisent un email
+préfixé `vitest-` et sont supprimés automatiquement après chaque suite.
 
 ## Variables d'environnement
 
 ```env
 DATABASE_URL=postgresql://postgres:motdepasse@localhost:5432/skillbridge
 JWT_SECRET=skillbridge-secret-minimum-32-caracteres
+JWT_EXPIRES_IN=7d
 PORT=5000
 NODE_ENV=development
 CORS_ORIGIN=http://localhost:5173
-JWT_EXPIRES_IN=7d
-PASSWORD_RESET_URL=http://localhost:5173/reset-password
-RESEND_API_KEY=re_...
-EMAIL_FROM=SkillBridge <no-reply@example.com>
+APP_URL=http://localhost:5000
+FRONTEND_URL=http://localhost:5173
+GMAIL_USER=votre.adresse@gmail.com
+GMAIL_APP_PASSWORD=xxxx xxxx xxxx xxxx
+REQUIRE_EMAIL_VERIFICATION=false
 ```
+
+- `CORS_ORIGIN` accepte plusieurs origines séparées par des virgules.
+- `GMAIL_USER` / `GMAIL_APP_PASSWORD` : identifiants SMTP Gmail (mot de passe
+  d'application, pas le mot de passe du compte) utilisés par `nodemailer` dans
+  `emailService.ts` pour les emails de vérification et de réinitialisation.
+- `REQUIRE_EMAIL_VERIFICATION` : si `true`, bloque la connexion tant que
+  l'email n'est pas vérifié.
 
 En production (Coolify) :
 ```env
@@ -68,36 +89,23 @@ backend/
 │   └── migrations/         # Historique des migrations
 ├── src/
 │   ├── controllers/        # Logique de chaque route
-│   │   ├── authController.ts
-│   │   ├── userController.ts
-│   │   ├── matchController.ts
-│   │   ├── conversationController.ts
-│   │   └── sessionController.ts
 │   ├── services/           # Logique métier
-│   │   ├── authService.ts
-│   │   ├── userService.ts
-│   │   ├── matchService.ts
-│   │   └── sessionService.ts
 │   ├── routes/             # Définition des endpoints
-│   │   ├── index.ts
-│   │   ├── authRoutes.ts
-│   │   ├── userRoutes.ts
-│   │   ├── matchRoutes.ts
-│   │   ├── conversationRoutes.ts
-│   │   └── sessionRoutes.ts
 │   ├── middleware/
 │   │   ├── authMiddleware.ts   # Vérification JWT
+│   │   ├── authRateLimit.ts    # Rate limiting sur les routes auth sensibles
 │   │   └── errorMiddleware.ts
 │   ├── sockets/
-│   │   └── index.ts            # Events Socket.IO
+│   │   └── index.ts            # Serveur Socket.IO (auth JWT + émission d'événements)
 │   ├── utils/
 │   │   ├── prisma.ts
 │   │   ├── jwt.ts
 │   │   ├── password.ts
 │   │   ├── env.ts
 │   │   └── httpError.ts
+│   ├── __tests__/          # Tests Vitest + Supertest
 │   ├── app.ts              # Config Express + middlewares
-│   └── server.ts           # Point d'entrée
+│   └── server.ts           # Point d'entrée (HTTP + Socket.IO)
 ├── Dockerfile
 ├── .env.example
 └── package.json
@@ -105,11 +113,20 @@ backend/
 
 ## Routes API
 
+Toutes les routes sont montées à la racine (pas de préfixe `/api`).
+
+### Health
+| Méthode | Route | Description | Auth |
+|---|---|---|---|
+| GET | `/` | Health check | Non |
+
 ### Auth
 | Méthode | Route | Description | Auth |
 |---|---|---|---|
 | POST | `/auth/register` | Inscription | Non |
 | POST | `/auth/login` | Connexion → JWT | Non |
+| GET | `/auth/verify-email?token=...` | Vérifier l'adresse email | Non |
+| POST | `/auth/resend-verification` | Renvoyer l'email de vérification | Non |
 | POST | `/auth/forgot-password` | Demander un lien de réinitialisation | Non |
 | POST | `/auth/reset-password` | Réinitialiser le mot de passe | Non |
 | GET | `/auth/me` | Profil connecté | Oui |
@@ -117,36 +134,88 @@ backend/
 ### Users
 | Méthode | Route | Description | Auth |
 |---|---|---|---|
-| GET | `/users/search` | Recherche de profils | Oui |
-| PUT | `/users/me` | Modifier son profil | Oui |
-| POST | `/users/skills` | Ajouter une compétence | Oui |
-| DELETE | `/users/skills/:id` | Supprimer | Oui |
-| POST | `/users/learning-goals` | Ajouter un objectif | Oui |
-| DELETE | `/users/learning-goals/:id` | Supprimer | Oui |
+| GET | `/users/search` | Recherche de profils | Non |
+| GET | `/users/me` | Mon profil complet | Oui |
+| PUT/PATCH | `/users/me` | Modifier son profil | Oui |
+| GET | `/users/:id` | Profil public | Non |
+| GET | `/users/:id/ratings` | Avis reçus | Oui |
+| GET | `/users/:id/rating-summary` | Résumé de notation | Oui |
+| POST | `/users/skills` | Ajouter une compétence enseignée | Oui |
+| DELETE | `/users/skills/:id` | Supprimer une compétence | Oui |
+| POST | `/users/learning-goals` | Ajouter un objectif d'apprentissage | Oui |
+| DELETE | `/users/learning-goals/:id` | Supprimer un objectif | Oui |
 
 ### Matches (Connexions)
 | Méthode | Route | Description | Auth |
 |---|---|---|---|
 | GET | `/matches/suggestions` | Profils compatibles | Oui |
-| POST | `/matches/request` | Envoyer une demande | Oui |
+| POST | `/matches/request` | Envoyer une demande de connexion | Oui |
 | GET | `/matches/mine` | Mes connexions | Oui |
-| PATCH | `/matches/:id` | Accepter / Décliner | Oui |
+| PATCH | `/matches/:id` | Accepter / Décliner / Annuler | Oui |
 
 ### Conversations
 | Méthode | Route | Description | Auth |
 |---|---|---|---|
 | GET | `/conversations` | Mes conversations | Oui |
-| GET | `/conversations/:id/messages` | Messages d'une conv | Oui |
-| POST | `/conversations/:id/messages` | Envoyer un message | Oui |
+| GET | `/conversations/:id` | Métadonnées d'une conversation | Oui |
+| GET | `/conversations/:id/messages` | Messages d'une conversation | Oui |
+| POST | `/conversations/:id/messages` | Envoyer un message texte | Oui |
+| POST | `/conversations/:id/messages/file` | Envoyer un message fichier | Oui |
+| PATCH | `/conversations/:id/archive` | Archiver | Oui |
+| PATCH | `/conversations/:id/unarchive` | Désarchiver | Oui |
+| DELETE | `/conversations/:id` | Supprimer | Oui |
 
 ### Sessions
 | Méthode | Route | Description | Auth |
 |---|---|---|---|
 | GET | `/sessions/mine` | Mes sessions | Oui |
 | GET | `/sessions/:id` | Détail d'une session | Oui |
-| POST | `/sessions` | Créer une session | Oui |
+| POST | `/sessions` | Créer une session (1 apprenant) | Oui |
+| POST | `/sessions/group` | Créer une session de groupe | Oui |
+| PATCH | `/sessions/:id` | Modifier une session | Oui |
+| POST | `/sessions/:id/accept` | Accepter (apprenant) | Oui |
+| POST | `/sessions/:id/refuse` | Refuser (apprenant) | Oui |
 | POST | `/sessions/:id/join` | Rejoindre → Jitsi Room | Oui |
-| POST | `/sessions/:id/end` | Terminer + crédits | Oui |
+| POST | `/sessions/:id/end` | Terminer + règlement des crédits | Oui |
+| POST | `/sessions/:id/rating` | Noter la session | Oui |
+| GET | `/sessions/:id/participants` | Lister les participants (groupe) | Oui |
+| POST | `/sessions/:id/participants` | Ajouter un participant (groupe) | Oui |
+| DELETE | `/sessions/:id/participants/:userId` | Retirer un participant (groupe) | Oui |
+
+### Notifications
+| Méthode | Route | Description | Auth |
+|---|---|---|---|
+| GET | `/notifications` | Mes notifications | Oui |
+| POST | `/notifications` | Créer une notification | Oui |
+| PATCH | `/notifications/:id/read` | Marquer comme lue | Oui |
+
+### Crédits
+| Méthode | Route | Description | Auth |
+|---|---|---|---|
+| GET | `/credits` | Solde de crédits courant | Oui |
+
+## Temps réel — Socket.IO
+
+Le serveur Socket.IO est attaché au même serveur HTTP qu'Express
+(`src/server.ts`) et authentifie chaque connexion via le JWT existant
+(`src/sockets/index.ts`), avant de placer le socket dans une room `user:<id>`.
+Aucune logique métier n'est dupliquée : les services Prisma existants
+émettent simplement un événement après l'opération.
+
+| Événement | Émis par | Payload |
+|---|---|---|
+| `notification:new` | `notificationsService.createNotificationService` | La notification créée |
+| `message:new` | `conversationService` (message texte/fichier) | `{ conversationId, message }` |
+| `session:update` | `sessionService` (création/accept/refuse/join/end/update) | `{ id, teacherId, learnerId, status }` |
+
+Connexion côté client :
+```js
+import { io } from "socket.io-client";
+
+const socket = io("http://localhost:5000", {
+  auth: { token: jwtToken },
+});
+```
 
 ## Modèle de données principal
 
@@ -214,7 +283,8 @@ Le `Dockerfile` à la racine du repo gère :
 
 Variables à configurer dans Coolify :
 ```
-DATABASE_URL, JWT_SECRET, PORT, NODE_ENV, CORS_ORIGIN, JWT_EXPIRES_IN, PASSWORD_RESET_URL, RESEND_API_KEY, EMAIL_FROM
+DATABASE_URL, JWT_SECRET, JWT_EXPIRES_IN, PORT, NODE_ENV, CORS_ORIGIN, APP_URL,
+FRONTEND_URL, GMAIL_USER, GMAIL_APP_PASSWORD, REQUIRE_EMAIL_VERIFICATION
 ```
 
 **Pre-deploy command dans Coolify :**
