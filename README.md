@@ -84,15 +84,10 @@ CORS_ORIGIN=https://skillbridge.octilabs.com
 
 ## Sécurité — git-crypt
 
-Ce repo est prévu pour chiffrer `.env`/`.env.*` avec [git-crypt](https://github.com/AGWA/git-crypt)
-(voir `.gitattributes`). Tant que `git-crypt init` n'a pas été lancé, ces
-règles n'ont aucun effet — le filtre n'est pas encore enregistré. Une fois
-initialisé (clé GPG requise) :
-
-```bash
-git-crypt init
-git-crypt add-gpg-user <TON_KEY_ID>
-```
+`.env`/`.env.*` sont chiffrés au repos avec [git-crypt](https://github.com/AGWA/git-crypt)
+(voir `.gitattributes`) — initialisé, clé GPG RSA 4096 de
+`JIMEL ABIDINE TOURE <abidinetou@gmail.com>` ajoutée comme premier
+collaborateur autorisé.
 
 **Ajouter un·e coéquipier·e :** iels génèrent et te partagent leur clé GPG
 publique, puis :
