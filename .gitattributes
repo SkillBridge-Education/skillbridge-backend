@@ -1,0 +1,8 @@
+# git-crypt: encrypt secrets at rest. Run `git-crypt init` and
+# `git-crypt add-gpg-user <KEY_ID>` once a GPG key is available (see
+# README "Sécurité — git-crypt" section) before this filter takes effect.
+.env filter=git-crypt diff=git-crypt
+.env.* filter=git-crypt diff=git-crypt
+
+# .env.example is a template with placeholder values, meant to stay readable.
+.env.example -filter -diff
