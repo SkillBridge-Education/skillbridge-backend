@@ -273,6 +273,17 @@ git push origin feat/ma-feature
 # Pull Request → dev
 ```
 
+## CI/CD — GitHub Actions
+
+`.github/workflows/ci.yml` : sur chaque PR et push vers `main`/`develope` —
+install pnpm, `prisma generate`, `prisma migrate deploy` (contre un service
+Postgres éphémère), build TypeScript, lint, tests.
+
+`.github/workflows/claude-review.yml` : revue automatique par Claude Code sur
+chaque PR (`anthropics/claude-code-action`). Nécessite le secret de repo
+`ANTHROPIC_API_KEY` (Settings → Secrets and variables → Actions → New
+repository secret) — à créer manuellement, jamais commité en clair.
+
 ## Déploiement — Coolify
 
 Le backend est déployé via Docker sur `jimel-api.octilabs.com`.

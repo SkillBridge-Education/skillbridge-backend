@@ -1,0 +1,32 @@
+name: Claude Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Requires the repo secret ANTHROPIC_API_KEY (Settings -> Secrets and
+      # variables -> Actions). Not created by this workflow file - see the
+      # backend README for how to add it.
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Review this pull request against the skillbridge-backend codebase
+            (Express 5, TypeScript, Prisma 7, PostgreSQL, Socket.IO). Focus on:
+            correctness, security (auth/JWT handling, input validation, Prisma
+            query safety), and consistency with the existing controller ->
+            service -> Prisma layering. Post inline comments for concrete
+            issues; skip generic style nitpicks.
