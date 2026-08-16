@@ -56,28 +56,22 @@ const endSessionService = async (sessionId, userId, durationSeconds) => {
     const minutesElapsed = Math.ceil(durationSeconds / 60);
     const teacherCreditsPaid = Math.min(minutesElapsed, session.creditsReserved);
     const learnerCreditsRefunded = session.creditsReserved - teacherCreditsPaid;
-    await prisma_1.prisma.$transaction([
-        prisma_1.prisma.user.update({
-            where: { id: session.teacherId },
-            data: { credits: { increment: teacherCreditsPaid } },
-        }),
-        ...(learnerCreditsRefunded > 0
-            ? [
-                prisma_1.prisma.user.update({
-                    where: { id: session.learnerId },
-                    data: { credits: { increment: learnerCreditsRefunded } },
-                }),
-            ]
-            : []),
-        prisma_1.prisma.teachingSession.update({
+    // grantCredits caps at MAX_CREDITS; a raw increment would break the
+    // "User_credits_bounds_check" constraint and roll back the whole settlement.
+    await prisma_1.prisma.$transaction(async (tx) => {
+        await (0, creditService_1.grantCredits)(tx, session.teacherId, teacherCreditsPaid);
+        if (learnerCreditsRefunded > 0) {
+            await (0, creditService_1.grantCredits)(tx, session.learnerId, learnerCreditsRefunded);
+        }
+        await tx.teachingSession.update({
             where: { id: sessionId },
             data: {
                 status: "COMPLETED",
                 actualEndedAt: new Date(),
                 creditsConsumed: teacherCreditsPaid,
             },
-        }),
-    ]);
+        });
+    });
     emitSessionUpdate({
         id: sessionId,
         teacherId: session.teacherId,
@@ -206,13 +200,9 @@ const createGroupSessionService = async (teacherId, learnerIds, title, estimated
     const jitsiRoomId = `skillbridge-${(0, uuid_1.v4)()}`;
     return prisma_1.prisma.$transaction(async (tx) => {
         for (const learner of learners) {
-            if (learner.credits < estimatedDuration) {
-                throw new httpError_1.HttpError(400, "Learner does not have enough credits");
-            }
-            await tx.user.update({
-                where: { id: learner.id },
-                data: { credits: { decrement: estimatedDuration } },
-            });
+            // The balances read outside the transaction can be stale, so let
+            // spendCredits do the check and the debit in a single atomic write.
+            await (0, creditService_1.spendCredits)(tx, learner.id, estimatedDuration);
         }
         const session = await tx.teachingSession.create({
             data: {
@@ -309,10 +299,9 @@ const addParticipantSessionService = async (sessionId, requesterId, userId) => {
         throw new httpError_1.HttpError(400, "User does not have enough credits");
     }
     return prisma_1.prisma.$transaction(async (tx) => {
-        await tx.user.update({
-            where: { id: userId },
-            data: { credits: { decrement: session.creditsReserved } },
-        });
+        // spendCredits re-checks the balance atomically; the read above can go stale
+        // between the check and the write when a user joins two sessions at once.
+        await (0, creditService_1.spendCredits)(tx, userId, session.creditsReserved);
         return tx.sessionParticipant.create({
             data: { sessionId, userId, role: "LEARNER" },
         });
@@ -338,10 +327,7 @@ const removeParticipantSessionService = async (sessionId, requesterId, userId) =
     if (!existing)
         throw new httpError_1.HttpError(404, "User is not a participant");
     return prisma_1.prisma.$transaction(async (tx) => {
-        await tx.user.update({
-            where: { id: userId },
-            data: { credits: { increment: session.creditsReserved } },
-        });
+        await (0, creditService_1.grantCredits)(tx, userId, session.creditsReserved);
         return tx.sessionParticipant.delete({
             where: { sessionId_userId: { sessionId, userId } },
         });
