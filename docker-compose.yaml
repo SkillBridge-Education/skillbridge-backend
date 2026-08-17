@@ -2,25 +2,46 @@ services:
   app:
     build: .
     container_name: skillbridge-app
-    ports:  
+    restart: unless-stopped
+    ports:
       - "5000:5000"
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@db:5432/skillbridge
-    depends_on:  
-      - db
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/skillbridge
+      # Required: env.ts refuses to start in production without a real secret.
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5173}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+      GMAIL_USER: ${GMAIL_USER:-}
+      GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD:-}
+      ALLOWED_FILE_HOSTS: ${ALLOWED_FILE_HOSTS:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      db:
+        # Without this the app starts before Postgres accepts connections and
+        # the migration step fails on a cold boot.
+        condition: service_healthy
 
   db:
     image: postgres:16-alpine
     container_name: skillbridge-db
-    restart: always
+    restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: skillbridge
-    ports:  
-      - "5432:5432"
-    volumes: 
+    # Bound to localhost and to port 5433 on the host, because a local
+    # PostgreSQL install already owns 5432. Remove the mapping entirely in
+    # production: only the app needs to reach the database.
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d skillbridge"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
 volumes:
   postgres_data:

@@ -1,0 +1,28 @@
+# Secrets must never reach the image: anyone who can pull it can read them.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Rebuilt inside the image; copying the host copy risks a platform mismatch.
+node_modules
+dist
+build
+coverage
+
+.git
+.github
+.gitignore
+.gitattributes
+
+**/*.test.ts
+**/*.test.tsx
+**/__tests__
+
+README.md
+docs
+Dockerfile
+.dockerignore
+docker-compose*.yaml
+docker-compose*.yml
