@@ -1,4 +1,19 @@
+# Anchors the pnpm store to this project so installs never reach outside it.
+packages:
+  - .
+
 allowBuilds:
   '@prisma/engines': true
   bcrypt: true
   prisma: true
+
+# Transitive dependencies pinned to patched releases. Each entry exists because
+# pnpm audit flagged a high-severity advisory that the direct dependency has not
+# yet picked up; drop an entry once the parent ships the fix itself.
+overrides:
+  # Memory exhaustion DoS from tiny fragments (reached via socket.io).
+  ws: ^8.21.3
+  # Zero-attachment memory exhaustion in the Socket.IO wire format.
+  socket.io-parser: ^4.2.7
+  # DoS via unbounded intermediate arrays (reached via ts-node-dev).
+  brace-expansion: ^5.0.9
