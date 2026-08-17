@@ -6,6 +6,7 @@ import userRoutes from "./userRoutes";
 import sessionRoutes from "./sessionRoutes";
 import conversationRoutes from "./conversationRoutes";
 import creditRoutes from "./creditRoutes";
+import adminRoutes from "./adminRoutes";
 import notificationRoutes from "./notificationRoutes";
 
 const router = Router();
@@ -19,5 +20,6 @@ router.use("/matches", matchRoutes);
 router.use("/conversations", conversationRoutes);
 router.use("/sessions", sessionRoutes);
 router.use("/credits", creditRoutes);
+router.use("/admin", adminRoutes);
 
 export default router;
