@@ -1,6 +1,7 @@
 import { prisma } from "../utils/prisma";
 import { NotificationType } from "@prisma/client";
 import { emitToUser } from "../sockets";
+import { HttpError } from "../utils/httpError";
 
 export const createNotificationService = async (
     userID : string,
@@ -35,7 +36,10 @@ export const getNotificationsService = async (userID : string) => {
 };
 
 export const markNotificationAsReadService = async (notificationID : string, userID : string) => {
-    const notification = await prisma.notification.update({
+    // updateMany returns a count instead of throwing, so a notification that
+    // belongs to someone else becomes a clean 404 rather than a raw Prisma
+    // error surfacing as a 500.
+    const { count } = await prisma.notification.updateMany({
         where: {
             id: notificationID,
             userId: userID,
@@ -44,5 +48,10 @@ export const markNotificationAsReadService = async (notificationID : string, use
             read: true,
         }
     });
-    return notification;
+
+    if (count === 0) {
+        throw new HttpError(404, "Notification not found");
+    }
+
+    return prisma.notification.findUniqueOrThrow({ where: { id: notificationID } });
 };
