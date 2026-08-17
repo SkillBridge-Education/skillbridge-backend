@@ -17,10 +17,10 @@ export default defineConfig({
       // Set just under the current level so the suite can only improve.
       // Raise these as coverage grows rather than leaving them aspirational.
       thresholds: {
-        statements: 46,
-        branches: 27,
-        functions: 41,
-        lines: 47,
+        statements: 54,
+        branches: 37,
+        functions: 51,
+        lines: 56,
       },
     },
   },
