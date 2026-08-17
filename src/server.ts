@@ -3,10 +3,14 @@ import app from "./app";
 import { env } from "./utils/env";
 import { initSockets } from "./sockets";
 import { logger } from "./utils/logger";
+import { initErrorTracking } from "./utils/errorTracking";
 import { prisma } from "./utils/prisma";
 
 // server.ts only starts the HTTP server.
 // Keeping startup separate from app.ts makes the Express app easier to test.
+// Must run before the server accepts traffic so startup failures are captured.
+initErrorTracking();
+
 const httpServer = http.createServer(app);
 initSockets(httpServer);
 

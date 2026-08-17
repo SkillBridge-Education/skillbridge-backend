@@ -51,6 +51,8 @@ export const env = {
   gmailAppPassword:  process.env.GMAIL_APP_PASSWORD ?? "",
   requireEmailVerification: process.env.REQUIRE_EMAIL_VERIFICATION === "true",
   logLevel: process.env.LOG_LEVEL,
+  // Empty means error tracking stays off; nothing else changes.
+  sentryDsn: process.env.SENTRY_DSN?.trim() || "",
   // Comma-separated hostnames allowed to serve chat attachments. Empty means
   // "any https host", which is only acceptable until file storage is set up.
   allowedFileHosts: (process.env.ALLOWED_FILE_HOSTS ?? "")

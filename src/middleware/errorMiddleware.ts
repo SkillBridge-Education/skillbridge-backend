@@ -1,6 +1,7 @@
 import { NextFunction, Request, Response } from "express";
 import { HttpError } from "../utils/httpError";
 import { logger } from "../utils/logger";
+import { captureError } from "../utils/errorTracking";
 
 export const errorMiddleware = (
   err: Error,
@@ -16,6 +17,11 @@ export const errorMiddleware = (
     { err, method: req.method, url: req.originalUrl },
     "Request failed"
   );
+
+  // Only unexpected failures are worth an alert; a 400 is the API working.
+  if (!isExpected) {
+    captureError(err, { method: req.method, url: req.originalUrl });
+  }
 
   if (err instanceof HttpError) {
     res.status(err.statusCode).json({
