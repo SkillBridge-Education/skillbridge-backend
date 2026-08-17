@@ -2,6 +2,7 @@ import { Prisma, UserStatus } from "@prisma/client";
 import { HttpError } from "../utils/httpError";
 import { prisma } from "../utils/prisma";
 import { LearningGoalInput, SkillInput, UpdateProfileInput } from "../utils/profileValidation";
+import { toPage, toPrismaPageArgs } from "../utils/pagination";
 
 const skillSelect = { id: true, name: true, description: true, category: true } satisfies Prisma.SkillSelect;
 
@@ -106,7 +107,12 @@ export const removeLearningGoal = async (userId: string, goalId: string) => {
   await prisma.learningGoal.delete({ where: { id: goalId } });
 };
 
-export const searchUsers = async (params: { query?: string; skill?: string; limit?: number }) => {
+export const searchUsers = async (params: {
+  query?: string;
+  skill?: string;
+  limit: number;
+  cursor?: string;
+}) => {
   const where: Prisma.UserWhereInput = { status: UserStatus.ACTIVE };
   if (params.query) {
     where.OR = [
@@ -117,5 +123,15 @@ export const searchUsers = async (params: { query?: string; skill?: string; limi
   if (params.skill) {
     where.teachingSkills = { some: { skill: { name: { contains: params.skill, mode: "insensitive" } } } };
   }
-  return prisma.user.findMany({ where, select: publicUserSelect, take: params.limit ?? 50, orderBy: { createdAt: "desc" } });
+
+  const rows = await prisma.user.findMany({
+    where,
+    select: publicUserSelect,
+    // Ordering by createdAt alone is not stable when two users share a
+    // timestamp, which would make a cursor skip or repeat rows.
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    ...toPrismaPageArgs({ limit: params.limit, cursor: params.cursor }),
+  });
+
+  return toPage(rows, params.limit);
 };

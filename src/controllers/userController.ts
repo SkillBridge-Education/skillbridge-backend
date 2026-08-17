@@ -10,6 +10,7 @@ import {
   updateUserProfile
 } from "../services/userService";
 import { getUserRatings, getUserRatingSummary } from "../services/ratingService";
+import type { SearchQuery } from "../schemas/userSchemas";
 import { HttpError } from "../utils/httpError";
 import { getAuthenticatedUserId } from "../utils/requestHelpers";
 import {
@@ -173,19 +174,18 @@ export const search = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const limit = typeof req.query.limit === "string" ? Number(req.query.limit) : undefined;
+    // The searchQuerySchema middleware has already coerced and bounded these.
+    const { q, skill, limit, cursor } = req.query as unknown as SearchQuery;
 
-    if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
-      throw new HttpError(400, "limit must be a positive integer");
-    }
+    const page = await searchUsers({ query: q, skill, limit, cursor });
 
-    const users = await searchUsers({
-      query: typeof req.query.q === "string" ? req.query.q : undefined,
-      skill: typeof req.query.skill === "string" ? req.query.skill : undefined,
-      limit
+    // `users` is kept at the top level so existing clients keep working; the
+    // cursor fields are additive.
+    res.status(200).json({
+      users: page.items,
+      nextCursor: page.nextCursor,
+      hasMore: page.hasMore,
     });
-
-    res.status(200).json({ users });
   } catch (error) {
     next(error);
   }

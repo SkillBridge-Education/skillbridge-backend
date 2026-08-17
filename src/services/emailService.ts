@@ -1,3 +1,4 @@
+import { logger } from "../utils/logger";
 import nodemailer from "nodemailer";
 import { env } from "../utils/env";
 
@@ -111,7 +112,7 @@ export const sendVerificationEmail = async (input: {
   const safeFirst = escapeHtml(input.firstName);
   const safeUrl   = escapeHtml(input.verificationUrl);
 
-  console.log(`[email] Verification link for ${input.to}: ${input.verificationUrl}`);
+  logger.info({ to: input.to }, "Verification email sent");
 
   if (!isConfigured()) {
     if (env.nodeEnv === "production") {
@@ -159,7 +160,7 @@ export const sendPasswordResetEmail = async (input: {
 }): Promise<void> => {
   const safeUrl = escapeHtml(input.resetUrl);
 
-  console.log(`[email] Password reset link for ${input.to}: ${input.resetUrl}`);
+  logger.info({ to: input.to }, "Password reset email sent");
 
   if (!isConfigured()) {
     if (env.nodeEnv === "production") {

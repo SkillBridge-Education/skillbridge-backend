@@ -1,3 +1,4 @@
+import { logger } from "../utils/logger";
 import { createHash, randomBytes } from "crypto";
 import { Role, UserStatus } from "@prisma/client";
 import { prisma } from "../utils/prisma";
@@ -84,7 +85,7 @@ export const registerUser = async (input: RegisterInput) => {
 
   // Always send the verification email (fire-and-forget so it never blocks registration)
   sendUserVerificationEmail(user).catch((err) => {
-    console.error("Failed to send verification email", err);
+    logger.error({ err }, "Failed to send verification email");
   });
 
   if (!env.requireEmailVerification) {
@@ -189,7 +190,7 @@ export const requestPasswordReset = async (email: string): Promise<void> => {
   try {
     await sendPasswordResetEmail({ to: user.email, resetUrl: resetUrl.toString() });
   } catch (error) {
-    console.error("Failed to send password reset email", error);
+    logger.error({ err: error }, "Failed to send password reset email");
   }
 };
 

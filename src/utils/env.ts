@@ -50,4 +50,5 @@ export const env = {
   gmailUser:         process.env.GMAIL_USER ?? "",
   gmailAppPassword:  process.env.GMAIL_APP_PASSWORD ?? "",
   requireEmailVerification: process.env.REQUIRE_EMAIL_VERIFICATION === "true",
+  logLevel: process.env.LOG_LEVEL,
 };
