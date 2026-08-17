@@ -6,3 +6,5 @@ node_modules
 
 # Build output must not be versioned
 dist/
+
+coverage/
