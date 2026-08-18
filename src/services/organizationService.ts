@@ -46,6 +46,104 @@ export const requireTeacher = (userId: string) =>
 export const requireOrgAdmin = (userId: string) =>
   requireMembership(userId, [OrgRole.ORG_ADMIN]);
 
+// --- Joining a school (sign-up flow) ---------------------------------------
+
+/**
+ * Approved schools a new user can pick from at sign-up. Public on purpose —
+ * someone has to choose their school before they belong to it — so it exposes
+ * only what a picker needs, never contact details or member counts.
+ */
+export const listJoinableOrganizations = async (search?: string) =>
+  prisma.organization.findMany({
+    where: {
+      status: "ACTIVE",
+      ...(search ? { name: { contains: search, mode: "insensitive" } } : {}),
+    },
+    select: { id: true, name: true, slug: true },
+    orderBy: { name: "asc" },
+    take: 50,
+  });
+
+/**
+ * Requests to join a school. Creates a PENDING membership, which grants
+ * nothing: only a school admin moving it to ACTIVE turns the account into a
+ * school account. Self-service would defeat that review entirely.
+ */
+export const requestToJoin = async (userId: string, organizationId: string) => {
+  const organization = await prisma.organization.findUnique({
+    where: { id: organizationId },
+    select: { status: true },
+  });
+  if (!organization || organization.status !== "ACTIVE") {
+    throw new HttpError(404, "School not found");
+  }
+
+  const existing = await prisma.membership.findFirst({
+    where: { userId, status: { in: [MembershipStatus.ACTIVE, MembershipStatus.PENDING] } },
+    select: { organizationId: true, status: true },
+  });
+
+  if (existing) {
+    if (existing.organizationId === organizationId) {
+      throw new HttpError(
+        409,
+        existing.status === MembershipStatus.ACTIVE
+          ? "You already belong to this school"
+          : "Your request is already awaiting review"
+      );
+    }
+    throw new HttpError(409, "You already belong to another school");
+  }
+
+  return prisma.membership.upsert({
+    where: { userId_organizationId: { userId, organizationId } },
+    update: { status: MembershipStatus.PENDING, orgRole: OrgRole.STUDENT },
+    create: { userId, organizationId, orgRole: OrgRole.STUDENT, status: MembershipStatus.PENDING },
+    select: { id: true, organizationId: true, orgRole: true, status: true, createdAt: true },
+  });
+};
+
+/** Pending join requests for the caller's school. */
+export const listJoinRequests = async (actorId: string) => {
+  const { organizationId } = await requireOrgAdmin(actorId);
+
+  return prisma.membership.findMany({
+    where: { organizationId, status: MembershipStatus.PENDING },
+    include: {
+      user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+};
+
+export const reviewJoinRequest = async (
+  actorId: string,
+  membershipId: string,
+  decision: "APPROVE" | "REJECT",
+  orgRole: OrgRole = OrgRole.STUDENT
+) => {
+  const { organizationId } = await requireOrgAdmin(actorId);
+
+  const membership = await prisma.membership.findUnique({
+    where: { id: membershipId },
+    select: { organizationId: true, status: true },
+  });
+  if (!membership || membership.organizationId !== organizationId) {
+    throw new HttpError(404, "Request not found");
+  }
+  if (membership.status !== MembershipStatus.PENDING) {
+    throw new HttpError(400, "This request has already been reviewed");
+  }
+
+  return prisma.membership.update({
+    where: { id: membershipId },
+    data:
+      decision === "APPROVE"
+        ? { status: MembershipStatus.ACTIVE, orgRole }
+        : { status: MembershipStatus.REVOKED },
+  });
+};
+
 // --- Membership management (school admins) ---------------------------------
 
 export const listMembers = async (

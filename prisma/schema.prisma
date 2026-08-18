@@ -31,6 +31,9 @@ enum OrganizationStatus {
 }
 
 enum MembershipStatus {
+  // A user who picked their school at sign-up but has not been let in yet.
+  // School powers are granted only from ACTIVE, so PENDING confers nothing.
+  PENDING
   ACTIVE
   REVOKED
 }

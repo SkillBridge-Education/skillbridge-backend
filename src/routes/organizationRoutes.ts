@@ -11,8 +11,12 @@ import {
   getStudentProgress,
   getStudentsAtRisk,
   getTeacherAgenda,
+  listJoinRequests,
+  listJoinableOrganizations,
   listMembers,
   removeMember,
+  requestToJoin,
+  reviewJoinRequest,
   verifyStudentSkill,
 } from "../services/organizationService";
 
@@ -30,9 +34,69 @@ const idParam = z.object({ id: z.string().uuid("A valid id is required") });
 
 const router = Router();
 
-// Every route needs a signed-in user; the school scoping happens in the service
-// layer, which reads the caller's own membership rather than trusting the body.
+/**
+ * Public: a new user has to see the list of schools before they can belong to
+ * one. Registered above router.use(authenticate) on purpose.
+ */
+router.get(
+  "/directory",
+  validate({ query: z.object({ search: z.string().trim().min(1).max(100).optional() }) }),
+  handle(async (req, res) => {
+    const organizations = await listJoinableOrganizations(
+      (req.query as { search?: string }).search
+    );
+    res.status(200).json({ organizations });
+  })
+);
+
+// Every route below needs a signed-in user; the school scoping happens in the
+// service layer, which reads the caller's own membership rather than trusting
+// the body.
 router.use(authenticate);
+
+// --- Joining a school ------------------------------------------------------
+
+// Creates a PENDING membership, which grants nothing until a school admin
+// approves it — that review is what keeps school mode out of self-service.
+router.post(
+  "/join",
+  validate({ body: z.object({ organizationId: z.string().uuid("A valid school id is required") }) }),
+  handle(async (req, res) => {
+    const membership = await requestToJoin(
+      getAuthenticatedUserId(req),
+      req.body.organizationId as string
+    );
+    res.status(201).json({ membership });
+  })
+);
+
+router.get(
+  "/join-requests",
+  handle(async (req, res) => {
+    const requests = await listJoinRequests(getAuthenticatedUserId(req));
+    res.status(200).json({ requests });
+  })
+);
+
+router.post(
+  "/join-requests/:id/review",
+  validate({
+    params: idParam,
+    body: z.object({
+      decision: z.enum(["APPROVE", "REJECT"]),
+      orgRole: z.nativeEnum(OrgRole).default(OrgRole.STUDENT),
+    }),
+  }),
+  handle(async (req, res) => {
+    const membership = await reviewJoinRequest(
+      getAuthenticatedUserId(req),
+      req.params.id as string,
+      req.body.decision as "APPROVE" | "REJECT",
+      req.body.orgRole as OrgRole
+    );
+    res.status(200).json({ membership });
+  })
+);
 
 /**
  * Tells a client which mode it is in. An account with no active membership is
