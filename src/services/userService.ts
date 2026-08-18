@@ -59,6 +59,23 @@ export const updateUserProfile = async (userId: string, input: UpdateProfileInpu
   if (input.avatarUrl    !== undefined) data.avatarUrl    = input.avatarUrl;
   if (input.bannerUrl    !== undefined) data.bannerUrl    = input.bannerUrl;
   if (input.availability !== undefined) data.availability = input.availability;
+
+  // Write-once. A freely editable date of birth makes the age gate decorative:
+  // sign up as 16, then set whatever you like. Correcting a genuine mistake is
+  // rare enough to go through support rather than reopen that hole.
+  if (input.dateOfBirth !== undefined) {
+    const existing = await prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: { dateOfBirth: true },
+    });
+
+    if (existing.dateOfBirth) {
+      throw new HttpError(409, "Your date of birth has already been recorded");
+    }
+
+    data.dateOfBirth = input.dateOfBirth;
+  }
+
   const user = await prisma.user.update({ where: { id: userId }, data, select: currentUserSelect });
   return user;
 };

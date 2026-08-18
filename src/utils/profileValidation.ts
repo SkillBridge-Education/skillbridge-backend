@@ -7,7 +7,15 @@ export interface UpdateProfileInput {
   avatarUrl?: string | null;
   bannerUrl?: string | null;
   availability?: string | null; // JSON string
+  dateOfBirth?: Date;
 }
+
+/**
+ * France sets the age of digital consent at 15 under RGPD article 8 / article 45
+ * of the loi Informatique et Libertés. Below it, a parent has to consent, which
+ * this service has no way to collect — so sign-up is refused instead.
+ */
+export const MINIMUM_AGE_YEARS = 15;
 
 export interface SkillInput {
   skillId?: string;
@@ -44,6 +52,47 @@ const optionalTrimmedString = (
   return trimmed;
 };
 
+export const ageOn = (birthDate: Date, reference: Date = new Date()): number => {
+  let age = reference.getFullYear() - birthDate.getFullYear();
+  const monthDelta = reference.getMonth() - birthDate.getMonth();
+
+  // Not yet had this year's birthday.
+  if (monthDelta < 0 || (monthDelta === 0 && reference.getDate() < birthDate.getDate())) {
+    age -= 1;
+  }
+
+  return age;
+};
+
+const optionalDateOfBirth = (value: unknown): Date | undefined => {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" && !(value instanceof Date)) {
+    throw new HttpError(400, "dateOfBirth must be a date");
+  }
+
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw new HttpError(400, "dateOfBirth must be a valid date");
+  }
+
+  const age = ageOn(date);
+
+  if (date.getTime() > Date.now()) {
+    throw new HttpError(400, "dateOfBirth cannot be in the future");
+  }
+  if (age > 120) {
+    throw new HttpError(400, "dateOfBirth must be a valid date");
+  }
+  if (age < MINIMUM_AGE_YEARS) {
+    throw new HttpError(
+      403,
+      `You must be at least ${MINIMUM_AGE_YEARS} years old to use SkillBridge`
+    );
+  }
+
+  return date;
+};
+
 const requiredSkillReference = (input: { skillId?: string; name?: string }): void => {
   if (!input.skillId && !input.name) throw new HttpError(400, "skillId or name is required");
 };
@@ -65,6 +114,7 @@ export const parseUpdateProfileInput = (body: unknown): UpdateProfileInput => {
     avatarUrl:    optionalTrimmedString(body.avatarUrl, "avatarUrl", 500),
     bannerUrl:    optionalTrimmedString(body.bannerUrl, "bannerUrl", 500),
     availability: optionalTrimmedString(body.availability, "availability", 2000),
+    dateOfBirth:  optionalDateOfBirth(body.dateOfBirth),
   };
 
   if (Object.values(input).every((value) => value === undefined)) {
