@@ -8,6 +8,7 @@ import conversationRoutes from "./conversationRoutes";
 import creditRoutes from "./creditRoutes";
 import adminRoutes from "./adminRoutes";
 import moderationRoutes from "./moderationRoutes";
+import organizationRoutes from "./organizationRoutes";
 import notificationRoutes from "./notificationRoutes";
 
 const router = Router();
@@ -23,5 +24,6 @@ router.use("/sessions", sessionRoutes);
 router.use("/credits", creditRoutes);
 router.use("/admin", adminRoutes);
 router.use("/", moderationRoutes);
+router.use("/school", organizationRoutes);
 
 export default router;
