@@ -9,6 +9,7 @@ import creditRoutes from "./creditRoutes";
 import adminRoutes from "./adminRoutes";
 import moderationRoutes from "./moderationRoutes";
 import organizationRoutes from "./organizationRoutes";
+import statsRoutes from "./statsRoutes";
 import notificationRoutes from "./notificationRoutes";
 
 const router = Router();
@@ -25,5 +26,6 @@ router.use("/credits", creditRoutes);
 router.use("/admin", adminRoutes);
 router.use("/", moderationRoutes);
 router.use("/school", organizationRoutes);
+router.use("/stats", statsRoutes);
 
 export default router;
