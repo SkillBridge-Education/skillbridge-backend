@@ -3,6 +3,7 @@ import { prisma } from "../utils/prisma";
 import { HttpError } from "../utils/httpError";
 import { createNotificationService } from "./notificationsService";
 import { grantCredits, spendCredits } from "./creditService";
+import { grantLoyaltyRewardIfDue, isSchoolSession } from "./rewardService";
 import { emitToUser } from "../sockets";
 
 const emitSessionUpdate = (session: { id: string; teacherId: string; learnerId: string; status: string }): void => {
@@ -77,10 +78,16 @@ export const endSessionService = async (
   // grantCredits caps at MAX_CREDITS; a raw increment would break the
   // "User_credits_bounds_check" constraint and roll back the whole settlement.
   await prisma.$transaction(async (tx) => {
-    await grantCredits(tx, session.teacherId, teacherCreditsPaid);
+    // School sessions sit outside the credit economy entirely: the learner was
+    // never charged on accept, so there is nothing to settle or refund here.
+    const schoolSession = await isSchoolSession(tx, session.teacherId);
 
-    if (learnerCreditsRefunded > 0) {
-      await grantCredits(tx, session.learnerId, learnerCreditsRefunded);
+    if (!schoolSession) {
+      await grantCredits(tx, session.teacherId, teacherCreditsPaid);
+
+      if (learnerCreditsRefunded > 0) {
+        await grantCredits(tx, session.learnerId, learnerCreditsRefunded);
+      }
     }
 
     await tx.teachingSession.update({
@@ -88,9 +95,14 @@ export const endSessionService = async (
       data: {
         status: "COMPLETED",
         actualEndedAt: new Date(),
-        creditsConsumed: teacherCreditsPaid,
+        creditsConsumed: schoolSession ? 0 : teacherCreditsPaid,
       },
     });
+
+    // Counted after the session is marked COMPLETED so it is included, and
+    // awarded to school teachers too — the milestone rewards teaching, not
+    // earning.
+    await grantLoyaltyRewardIfDue(tx, session.teacherId);
   });
 
   emitSessionUpdate({
@@ -160,15 +172,21 @@ export const acceptSessionService = async (
 
   // spendCredits throws 400 "User does not have enough credits" if insufficient
   const updated = await prisma.$transaction(async (tx) => {
-    await spendCredits(tx, learnerId, session.creditsReserved);
-    await tx.rewardTransaction.create({
-      data: {
-        userId: learnerId,
-        amount: session.creditsReserved,
-        type: "SPENT",
-        description: `Réservation session acceptée : "${session.title}"`,
-      },
-    });
+    // School mode has no credit economy: a lesson from a school teacher costs
+    // the student nothing, so a student with an empty balance is never turned
+    // away from their own school.
+    if (!(await isSchoolSession(tx, session.teacherId))) {
+      await spendCredits(tx, learnerId, session.creditsReserved);
+      await tx.rewardTransaction.create({
+        data: {
+          userId: learnerId,
+          amount: session.creditsReserved,
+          type: "SPENT",
+          description: `Réservation session acceptée : "${session.title}"`,
+        },
+      });
+    }
+
     return tx.teachingSession.update({
       where: { id: sessionId },
       data: { status: "SCHEDULED" },
