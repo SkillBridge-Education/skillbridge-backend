@@ -7,6 +7,7 @@ import { logger } from "./utils/logger";
 import { pinoHttp } from "pino-http";
 import routes from "./routes";
 import { env } from "./utils/env";
+import { uploadDirectory } from "./services/uploadService";
 
 const app = express();
 
@@ -36,6 +37,15 @@ app.set("trust proxy", 1);
 
 // Baseline limit for every route. Stricter limits are applied per-route on top.
 app.use(globalRateLimiter);
+
+// Uploaded media. What is served here is always a file this server produced —
+// every image is decoded and re-encoded before being written, so the original
+// bytes a client sent never reach disk. `index: false` keeps the directory from
+// being browsable.
+app.use(
+  "/uploads",
+  express.static(uploadDirectory(), { maxAge: "7d", index: false })
+);
 
 // Keep route registration in one place so new feature routes are easy to add.
 app.use(routes);

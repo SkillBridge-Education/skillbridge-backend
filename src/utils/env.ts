@@ -53,6 +53,8 @@ export const env = {
   logLevel: process.env.LOG_LEVEL,
   // Empty means error tracking stays off; nothing else changes.
   sentryDsn: process.env.SENTRY_DSN?.trim() || "",
+  // Where re-encoded uploads are written. Outside the source tree in production.
+  uploadDir: process.env.UPLOAD_DIR?.trim() || "",
   // Comma-separated hostnames allowed to serve chat attachments. Empty means
   // "any https host", which is only acceptable until file storage is set up.
   allowedFileHosts: (process.env.ALLOWED_FILE_HOSTS ?? "")
