@@ -172,6 +172,8 @@ model User {
   legalAcceptances      LegalAcceptance[]
   invitesCreated        TeacherInvite[]  @relation("InviteCreator")
   invitesUsed           TeacherInvite[]  @relation("InviteUser")
+  favorites             Favorite[]       @relation("FavoriteOwner")
+  favoritedBy           Favorite[]       @relation("FavoritedUser")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -666,4 +668,21 @@ model TeacherInvite {
 
   @@index([organizationId, usedAt])
   @@index([expiresAt])
+}
+
+/// Bookmarking someone to come back to later, without contacting them.
+/// Deliberately one-sided and silent: the other person is never told, which is
+/// what makes it usable as a shortlist rather than a soft connection request.
+model Favorite {
+  id          String @id @default(uuid())
+  userId      String
+  favoritedId String
+
+  user      User @relation("FavoriteOwner", fields: [userId], references: [id], onDelete: Cascade)
+  favorited User @relation("FavoritedUser", fields: [favoritedId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, favoritedId])
+  @@index([userId, createdAt])
 }

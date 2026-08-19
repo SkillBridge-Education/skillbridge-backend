@@ -12,6 +12,7 @@ import organizationRoutes from "./organizationRoutes";
 import statsRoutes from "./statsRoutes";
 import joinCodeRoutes from "./joinCodeRoutes";
 import uploadRoutes from "./uploadRoutes";
+import favoriteRoutes from "./favoriteRoutes";
 import notificationRoutes from "./notificationRoutes";
 
 const router = Router();
@@ -31,5 +32,6 @@ router.use("/school", organizationRoutes);
 router.use("/stats", statsRoutes);
 router.use("/school", joinCodeRoutes);
 router.use("/uploads", uploadRoutes);
+router.use("/favorites", favoriteRoutes);
 
 export default router;
