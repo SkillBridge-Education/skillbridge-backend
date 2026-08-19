@@ -4,6 +4,7 @@ import { HttpError } from "../utils/httpError";
 import { grantCredits, spendCredits } from "./creditService";
 import { disconnectUser } from "../sockets";
 import { toPage, toPrismaPageArgs } from "../utils/pagination";
+import { assignJoinCode } from "./joinCodeService";
 
 /**
  * Every privileged action goes through here so that the audit entry is written
@@ -307,7 +308,7 @@ const reviewOrganization = (status: "ACTIVE" | "REJECTED") =>
       throw new HttpError(400, "Organization has already been reviewed");
     }
 
-    return prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       const updated = await tx.organization.update({
         where: { id: organizationId },
         data: {
@@ -328,6 +329,15 @@ const reviewOrganization = (status: "ACTIVE" | "REJECTED") =>
 
       return updated;
     });
+
+    // Issued only on approval, so a pending application never carries a usable
+    // code. Outside the transaction: allocating it retries on collision, which
+    // would hold the row lock for as long as that takes.
+    if (status === "ACTIVE") {
+      await assignJoinCode(organizationId);
+    }
+
+    return result;
   };
 
 // Manual approval is what keeps school mode out of reach of individual sign-ups.

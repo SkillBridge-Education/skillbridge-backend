@@ -170,6 +170,8 @@ model User {
   adminActions          AdminAuditLog[] @relation("AuditActor")
   organizationsReviewed Organization[]  @relation("OrgReviewer")
   legalAcceptances      LegalAcceptance[]
+  invitesCreated        TeacherInvite[]  @relation("InviteCreator")
+  invitesUsed           TeacherInvite[]  @relation("InviteUser")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -484,7 +486,21 @@ model Organization {
   reviewedAt   DateTime?
   reviewNote   String?
 
-  memberships Membership[]
+  // Six digits, shown to staff so members can be told how to join. Its last two
+  // digits are the school key, repeated in every teacher invite it issues: a
+  // wrong-school code is then caught before any lookup. That key is a usability
+  // check, not a security boundary — the secret is the full code.
+  joinCode String? @unique
+
+  // Details captured when a school applies, so a reviewer can tell a real
+  // institution from someone claiming to be one.
+  registrationNumber String?
+  foundedOn          DateTime?
+  address            String?
+  specialties        String?
+
+  memberships    Membership[]
+  teacherInvites TeacherInvite[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -504,6 +520,10 @@ model Membership {
 
   // Identifier supplied by the school IdP (OneLogin `sub`), when provisioned by SSO.
   externalId String?
+
+  // Delegation: the school creator can let other staff mint teacher invites,
+  // without handing over the rest of the ORG_ADMIN powers.
+  canInviteTeachers Boolean @default(false)
 
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -623,4 +643,27 @@ model LegalAcceptance {
 
   @@unique([userId, document, version])
   @@index([userId])
+}
+
+/// Codes d'invitation professeur. Un code est nominatif, à usage unique, et
+/// rattaché à un établissement.
+model TeacherInvite {
+  id             String    @id @default(uuid())
+  code           String    @unique
+  organizationId String
+  createdById    String
+  usedById       String?
+  usedAt         DateTime?
+  expiresAt      DateTime
+  revokedAt      DateTime?
+  note           String?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy    User         @relation("InviteCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  usedBy       User?        @relation("InviteUser", fields: [usedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, usedAt])
+  @@index([expiresAt])
 }
