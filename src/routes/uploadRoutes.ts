@@ -65,6 +65,40 @@ const handleUpload = (kind: ImageKind) =>
 router.post("/avatar", authenticate, uploadLimiter, upload.single("image"), handleUpload("avatar"));
 router.post("/banner", authenticate, uploadLimiter, upload.single("image"), handleUpload("banner"));
 
+/**
+ * Chat attachments. Unlike the two above this does not touch the profile — it
+ * stores the image and hands back its URL, which the caller then sends as a
+ * message. Accepts `image` or `file` as the field name: the mobile client was
+ * written against `file` before this route existed.
+ */
+router.post(
+  "/chat",
+  authenticate,
+  uploadLimiter,
+  upload.fields([
+    { name: "image", maxCount: 1 },
+    { name: "file", maxCount: 1 },
+  ]),
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const files = req.files as Record<string, Express.Multer.File[]> | undefined;
+      const uploaded = files?.image?.[0] ?? files?.file?.[0];
+      if (!uploaded) throw new HttpError(400, "No image was uploaded");
+
+      const { url } = await storeImage(uploaded.buffer, "chat");
+
+      res.status(201).json({
+        url,
+        // Sanitised: the original name is shown to the recipient, so it must not
+        // be able to carry a path or an overlong string.
+        fileName: uploaded.originalname.replace(/[/\\]/g, "").slice(0, 120) || null,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
 /** Removing an image is not the same as uploading an empty one. */
 const handleDelete = (kind: ImageKind) =>
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {

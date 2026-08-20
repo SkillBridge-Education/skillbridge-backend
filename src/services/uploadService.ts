@@ -38,13 +38,16 @@ const SIGNATURES: Array<{ format: string; test: (buffer: Buffer) => boolean }> =
   },
 ];
 
-export type ImageKind = "avatar" | "banner";
+export type ImageKind = "avatar" | "banner" | "chat";
 
 // Bounded so one upload cannot become a multi-megabyte download for everyone
 // who views the profile.
 const DIMENSIONS: Record<ImageKind, { width: number; height: number }> = {
   avatar: { width: 512, height: 512 },
   banner: { width: 1600, height: 400 },
+  // Chat images keep their aspect ratio (see `fit` below): cropping someone's
+  // photo to a fixed frame would hide the part they meant to show.
+  chat: { width: 1600, height: 1600 },
 };
 
 const detectFormat = (buffer: Buffer): string => {
@@ -79,7 +82,12 @@ export const storeImage = async (
   try {
     output = await sharp(buffer, { failOn: "error" })
       .rotate() // Applies the EXIF orientation before the metadata is dropped.
-      .resize(width, height, { fit: "cover", withoutEnlargement: true })
+      .resize(width, height, {
+        // Avatars and banners fill a known frame; a chat image is bounded but
+        // never cropped.
+        fit: kind === "chat" ? "inside" : "cover",
+        withoutEnlargement: true,
+      })
       .webp({ quality: 82 })
       .toBuffer();
   } catch (error) {

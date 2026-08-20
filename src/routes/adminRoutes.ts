@@ -54,6 +54,9 @@ router.post(
 
 // --- Reports ---------------------------------------------------------------
 router.get("/reports", validate({ query: listReportsQuerySchema }), listReportsController);
+// "resolve" is what the back-office calls it and what a moderator would say;
+// "action" was the internal name. Both are served so neither client breaks.
+router.post("/reports/:id/resolve", withReason, actionReportController);
 router.post("/reports/:id/action", withReason, actionReportController);
 router.post("/reports/:id/dismiss", withReason, dismissReportController);
 
