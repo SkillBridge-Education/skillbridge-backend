@@ -30,7 +30,10 @@ router.use("/admin", adminRoutes);
 router.use("/", moderationRoutes);
 router.use("/school", organizationRoutes);
 router.use("/stats", statsRoutes);
-router.use("/school", joinCodeRoutes);
+// Mounted under its own prefix rather than /school: both routers define a
+// "/join", and the first one registered would silently win — the code-based
+// join would have been unreachable.
+router.use("/school/codes", joinCodeRoutes);
 router.use("/uploads", uploadRoutes);
 router.use("/favorites", favoriteRoutes);
 
