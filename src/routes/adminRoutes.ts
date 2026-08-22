@@ -5,7 +5,8 @@ import { z } from "zod";
 import { validate } from "../middleware/validate";
 import { authRateLimiter } from "../middleware/authRateLimit";
 import { getAuthenticatedUserId } from "../utils/requestHelpers";
-import { adminLogin, getAdminProfile, getTraffic } from "../services/adminAuthService";
+import { adminLogin, getAdminProfile } from "../services/adminAuthService";
+import { getDashboardStats, getTimeseries } from "../services/dashboardStatsService";
 import { getSettings, updateSettings } from "../services/settingsService";
 import { recordSettingsChange } from "../services/adminService";
 import {
@@ -87,14 +88,23 @@ router.post(
 // Read only: there is deliberately no route that writes, edits or deletes an
 // audit entry. A trail that can be rewritten proves nothing.
 router.get("/audit", validate({ query: listAuditQuerySchema }), listAuditController);
-router.get("/stats", getStatsController);
+router.get(
+  "/stats",
+  async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      res.status(200).json({ stats: await getDashboardStats() });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
 
 router.get(
   "/stats/traffic",
   validate({ query: z.object({ days: z.coerce.number().int().min(1).max(90).default(30) }) }),
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const traffic = await getTraffic((req.query as unknown as { days: number }).days);
+      const traffic = await getTimeseries((req.query as unknown as { days: number }).days);
       res.status(200).json({ traffic });
     } catch (error) {
       next(error);
