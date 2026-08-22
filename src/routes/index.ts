@@ -14,6 +14,7 @@ import statsRoutes from "./statsRoutes";
 import joinCodeRoutes from "./joinCodeRoutes";
 import uploadRoutes from "./uploadRoutes";
 import favoriteRoutes from "./favoriteRoutes";
+import { adminSupportRouter, supportRouter } from "./supportRoutes";
 import notificationRoutes from "./notificationRoutes";
 
 const router = Router();
@@ -28,6 +29,7 @@ router.use("/conversations", conversationRoutes);
 router.use("/sessions", sessionRoutes);
 router.use("/credits", creditRoutes);
 router.use("/admin/auth", adminAuthRouter);
+router.use("/admin/support", adminSupportRouter);
 router.use("/admin", adminRoutes);
 router.use("/", moderationRoutes);
 router.use("/school", organizationRoutes);
@@ -38,5 +40,6 @@ router.use("/stats", statsRoutes);
 router.use("/school/codes", joinCodeRoutes);
 router.use("/uploads", uploadRoutes);
 router.use("/favorites", favoriteRoutes);
+router.use("/support", supportRouter);
 
 export default router;
