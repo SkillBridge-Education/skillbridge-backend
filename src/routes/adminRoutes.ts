@@ -1,7 +1,11 @@
-import { Router } from "express";
+import { NextFunction, Request, Response, Router } from "express";
 import { Role } from "@prisma/client";
 import { authenticate, authorizeRoles } from "../middleware/authMiddleware";
+import { z } from "zod";
 import { validate } from "../middleware/validate";
+import { authRateLimiter } from "../middleware/authRateLimit";
+import { getAuthenticatedUserId } from "../utils/requestHelpers";
+import { adminLogin, getAdminProfile, getTraffic } from "../services/adminAuthService";
 import {
   actionReportController,
   adjustCreditsController,
@@ -83,4 +87,76 @@ router.post(
 router.get("/audit", validate({ query: listAuditQuerySchema }), listAuditController);
 router.get("/stats", getStatsController);
 
+router.get(
+  "/stats/traffic",
+  validate({ query: z.object({ days: z.coerce.number().int().min(1).max(90).default(30) }) }),
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const traffic = await getTraffic((req.query as unknown as { days: number }).days);
+      res.status(200).json({ traffic });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
 export default router;
+
+// --- Back-office sign-in ---------------------------------------------------
+
+/**
+ * Registered before the admin guard: signing in is how one becomes an admin,
+ * so it cannot itself require being one.
+ */
+export const adminAuthRouter = Router();
+
+adminAuthRouter.post(
+  "/login",
+  authRateLimiter,
+  validate({
+    body: z.object({
+      email: z.string().trim().email("A valid email is required"),
+      password: z.string().min(1, "Password is required"),
+    }),
+  }),
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const result = await adminLogin(req.body.email as string, req.body.password as string);
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+/**
+ * The dashboard has a second-factor step. There is no TOTP secret stored and
+ * nothing to verify against, so accepting a code here would be theatre — it
+ * would report success on any six digits. It refuses instead, and says why.
+ */
+adminAuthRouter.post("/mfa", (_req: Request, res: Response): void => {
+  res.status(501).json({
+    message:
+      "Two-factor authentication is not configured yet. Sign-in completes at the password step.",
+    mfaEnabled: false,
+  });
+});
+
+adminAuthRouter.post("/logout", (_req: Request, res: Response): void => {
+  // Stateless tokens: signing out is the client discarding it. Present so the
+  // dashboard has something to call, and so the intent is recorded here.
+  res.status(204).send();
+});
+
+adminAuthRouter.get(
+  "/me",
+  authenticate,
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const admin = await getAdminProfile(getAuthenticatedUserId(req));
+      res.status(200).json({ admin });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
