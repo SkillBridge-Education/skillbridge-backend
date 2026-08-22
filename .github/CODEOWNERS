@@ -1,0 +1,9 @@
+# Toute modification demande une revue du propriétaire du projet.
+# GitHub n'applique cette règle que si la protection de branche exige
+# l'approbation des propriétaires de code -- à activer dans les réglages.
+*       @abidinetou-lgtm
+
+# Chemins sensibles, rappelés ici pour qu'une revue les remarque :
+# secrets chiffrés, pipelines, et tout ce qui touche aux droits.
+/.github/           @abidinetou-lgtm
+/.gitattributes     @abidinetou-lgtm

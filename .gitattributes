@@ -1,8 +1,14 @@
-# git-crypt: encrypt secrets at rest. Run `git-crypt init` and
-# `git-crypt add-gpg-user <KEY_ID>` once a GPG key is available (see
-# README "Sécurité — git-crypt" section) before this filter takes effect.
+# Secrets chiffres au repos par git-crypt. Sans cette regle, un .env commite
+# par erreur part en clair.
 .env filter=git-crypt diff=git-crypt
 .env.* filter=git-crypt diff=git-crypt
+*.pem filter=git-crypt diff=git-crypt
+*.key filter=git-crypt diff=git-crypt
 
-# .env.example is a template with placeholder values, meant to stay readable.
-.env.example -filter -diff
+# .env.example doit rester lisible : c'est la documentation de la configuration.
+# Un motif negatif (!.env.example) est ignore par git-attributes -- il faut
+# desactiver explicitement le filtre sur ce chemin, apres la regle .env.*
+.env.example !filter !diff
+
+# Fins de ligne normalisees : developpe sous Windows, compile sous Linux en CI.
+* text=auto eol=lf

@@ -7,6 +7,12 @@ import { getAuthenticatedUserId } from "../utils/requestHelpers";
 import {
   addMember,
   getActiveMembership,
+  getMembershipState,
+  getStudyLevels,
+  browseSchoolDirectory,
+  leaveOrganization,
+  setMyStudyLevel,
+  setStudyLevels,
   getClassSkillGaps,
   getStudentProgress,
   getStudentsAtRisk,
@@ -106,8 +112,86 @@ router.post(
 router.get(
   "/me/membership",
   handle(async (req, res) => {
+    // Derived from the same rule the school routes enforce, including the
+    // school's own status: telling a client SCHOOL while every school route
+    // refuses it is worse than telling it nothing.
+    const state = await getMembershipState(getAuthenticatedUserId(req));
+    res.status(200).json(state);
+  })
+);
+
+/** Leaving of one's own accord makes an alumnus, never a removal. */
+router.post(
+  "/me/leave",
+  handle(async (req, res) => {
+    await leaveOrganization(getAuthenticatedUserId(req));
+    res.status(204).send();
+  })
+);
+
+router.patch(
+  "/me/study-level",
+  validate({ body: z.object({ studyLevel: z.string().trim().max(80).nullable() }) }),
+  handle(async (req, res) => {
+    const membership = await setMyStudyLevel(
+      getAuthenticatedUserId(req),
+      req.body.studyLevel as string | null
+    );
+    res.status(200).json({ membership });
+  })
+);
+
+// --- Directory -------------------------------------------------------------
+
+/**
+ * Open to every member, not just staff. A student looking for classmates or for
+ * former students who might open a door is the reason school mode exists.
+ */
+router.get(
+  "/directory/members",
+  validate({
+    query: z.object({
+      search: z.string().trim().min(1).max(100).optional(),
+      orgRole: z.nativeEnum(OrgRole).optional(),
+      includeAlumni: z.coerce.boolean().default(true),
+      limit: z.coerce.number().int().positive().max(100).default(50),
+    }),
+  }),
+  handle(async (req, res) => {
+    const { search, orgRole, includeAlumni, limit } = req.query as never;
+    const members = await browseSchoolDirectory(getAuthenticatedUserId(req), {
+      search,
+      orgRole,
+      includeAlumni,
+      limit,
+    });
+    res.status(200).json({ members });
+  })
+);
+
+// --- Study levels ----------------------------------------------------------
+
+router.get(
+  "/study-levels",
+  handle(async (req, res) => {
     const membership = await getActiveMembership(getAuthenticatedUserId(req));
-    res.status(200).json({ membership, mode: membership ? "SCHOOL" : "INDIVIDUAL" });
+    if (!membership) {
+      res.status(200).json({ levels: [] });
+      return;
+    }
+    res.status(200).json({ levels: await getStudyLevels(membership.organizationId) });
+  })
+);
+
+router.put(
+  "/study-levels",
+  validate({ body: z.object({ levels: z.array(z.string().trim().max(80)).max(30) }) }),
+  handle(async (req, res) => {
+    const levels = await setStudyLevels(
+      getAuthenticatedUserId(req),
+      req.body.levels as string[]
+    );
+    res.status(200).json({ levels });
   })
 );
 

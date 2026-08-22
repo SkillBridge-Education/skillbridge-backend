@@ -10,6 +10,46 @@ import { HttpError } from "../utils/httpError";
  */
 
 /** The caller's active membership, or null for an individual account. */
+/**
+ * The caller's membership and what it currently entitles them to.
+ *
+ * `mode` is deliberately derived here rather than from the row alone. A member
+ * of a suspended school used to be told SCHOOL while every school route refused
+ * them — and, worse, their credits kept being charged behind a tab the client
+ * had hidden. The rule that governs the powers has to be the rule that governs
+ * what the client is told.
+ *
+ * PENDING is reported too: someone who asked to join and heard nothing back has
+ * no way to tell a slow admin from a lost request.
+ */
+export const getMembershipState = async (userId: string) => {
+  const membership = await prisma.membership.findFirst({
+    where: {
+      userId,
+      status: { in: [MembershipStatus.ACTIVE, MembershipStatus.PENDING, MembershipStatus.ALUMNI] },
+    },
+    include: { organization: { select: { id: true, name: true, slug: true, status: true } } },
+    // ACTIVE first, so a stale ALUMNI row never masks a current membership.
+    orderBy: { createdAt: "desc" },
+  });
+
+  if (!membership) return { membership: null, mode: "INDIVIDUAL" as const };
+
+  const schoolActive = membership.organization.status === "ACTIVE";
+  const isMember = membership.status === MembershipStatus.ACTIVE;
+
+  return {
+    membership,
+    // Only an active membership in an active school gets the school experience,
+    // which is exactly the condition every other route enforces.
+    mode: schoolActive && isMember ? ("SCHOOL" as const) : ("INDIVIDUAL" as const),
+    schoolActive,
+    pending: membership.status === MembershipStatus.PENDING,
+    alumni: membership.status === MembershipStatus.ALUMNI,
+  };
+};
+
+/** Active membership only — what the school features are keyed on. */
 export const getActiveMembership = async (userId: string) =>
   prisma.membership.findFirst({
     where: { userId, status: MembershipStatus.ACTIVE },
@@ -208,7 +248,23 @@ export const addMember = async (
   }
 };
 
-export const removeMember = async (actorId: string, userId: string) => {
+/**
+ * Removes someone from the school.
+ *
+ * `graduated` decides which of two very different things this is. Someone who
+ * finished becomes an ALUMNI: they keep a place in the network and stay
+ * reachable, which is the point of school mode. Someone excluded is REVOKED and
+ * loses access. Collapsing the two would either strand former students or leave
+ * excluded ones visible.
+ *
+ * Neither deletes the account: the person keeps it, and it becomes an ordinary
+ * individual account.
+ */
+export const removeMember = async (
+  actorId: string,
+  userId: string,
+  graduated = false
+) => {
   const { organizationId } = await requireOrgAdmin(actorId);
 
   if (actorId === userId) {
@@ -217,10 +273,161 @@ export const removeMember = async (actorId: string, userId: string) => {
 
   const { count } = await prisma.membership.updateMany({
     where: { userId, organizationId, status: MembershipStatus.ACTIVE },
-    data: { status: MembershipStatus.REVOKED },
+    data: {
+      status: graduated ? MembershipStatus.ALUMNI : MembershipStatus.REVOKED,
+      leftAt: new Date(),
+    },
   });
 
   if (count === 0) throw new HttpError(404, "This user is not a member of your school");
+};
+
+/**
+ * Leaving of one's own accord. Always produces an alumnus — someone who chose
+ * to go has not been excluded, and the distinction is the whole reason the two
+ * states exist.
+ */
+export const leaveOrganization = async (userId: string) => {
+  const membership = await getActiveMembership(userId);
+  if (!membership) throw new HttpError(404, "You do not belong to a school");
+
+  await prisma.membership.update({
+    where: { id: membership.id },
+    data: { status: MembershipStatus.ALUMNI, leftAt: new Date() },
+  });
+};
+
+/**
+ * The school directory, open to every member rather than staff only.
+ *
+ * This is what makes school mode worth having: a student looks for classmates
+ * and for former students who might open a door. Restricting it to staff — as
+ * the previous version did — left the network invisible to the people it exists
+ * for.
+ *
+ * Alumni are included and flagged, never hidden: a network that drops people
+ * the day they graduate is not a network.
+ */
+export const browseSchoolDirectory = async (
+  actorId: string,
+  params: { search?: string; orgRole?: OrgRole; includeAlumni?: boolean; limit: number }
+) => {
+  const membership = await getActiveMembership(actorId);
+  if (!membership) throw new HttpError(403, "This feature is only available to school members");
+  if (membership.organization.status !== "ACTIVE") {
+    throw new HttpError(403, "This school account is not active");
+  }
+
+  const statuses = params.includeAlumni
+    ? [MembershipStatus.ACTIVE, MembershipStatus.ALUMNI]
+    : [MembershipStatus.ACTIVE];
+
+  const rows = await prisma.membership.findMany({
+    where: {
+      organizationId: membership.organizationId,
+      status: { in: statuses },
+      ...(params.orgRole ? { orgRole: params.orgRole } : {}),
+      ...(params.search
+        ? {
+            user: {
+              OR: [
+                { firstName: { contains: params.search, mode: "insensitive" } },
+                { lastName: { contains: params.search, mode: "insensitive" } },
+              ],
+            },
+          }
+        : {}),
+      // A member's own row is not a search result.
+      NOT: { userId: actorId },
+      user: { status: "ACTIVE" },
+    },
+    select: {
+      id: true,
+      orgRole: true,
+      status: true,
+      studyLevel: true,
+      leftAt: true,
+      user: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          avatarUrl: true,
+          bio: true,
+          averageRating: true,
+          totalRatings: true,
+          teachingSkills: {
+            select: { skill: { select: { id: true, name: true, category: true } } },
+            take: 5,
+          },
+        },
+      },
+    },
+    // Current members before alumni, then most recent.
+    orderBy: [{ status: "asc" }, { createdAt: "desc" }],
+    take: params.limit,
+  });
+
+  return rows.map((row) => ({
+    ...row,
+    isAlumni: row.status === MembershipStatus.ALUMNI,
+  }));
+};
+
+/** The levels this school awards, for the picker shown at join time. */
+export const getStudyLevels = async (organizationId: string): Promise<string[]> => {
+  const organization = await prisma.organization.findUnique({
+    where: { id: organizationId },
+    select: { studyLevels: true },
+  });
+
+  if (!organization?.studyLevels) return [];
+
+  try {
+    const parsed: unknown = JSON.parse(organization.studyLevels);
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === "string") : [];
+  } catch {
+    // Stored malformed: an empty picker is better than a crash on a join screen.
+    return [];
+  }
+};
+
+/** Replaces the list of levels. Admin only — it drives what members can pick. */
+export const setStudyLevels = async (actorId: string, levels: string[]) => {
+  const { organizationId } = await requireOrgAdmin(actorId);
+
+  const cleaned = levels
+    .map((level) => level.trim())
+    .filter(Boolean)
+    .slice(0, 30);
+
+  await prisma.organization.update({
+    where: { id: organizationId },
+    data: { studyLevels: JSON.stringify(cleaned) },
+  });
+
+  return cleaned;
+};
+
+/** A member sets their own level, from what the school offers. */
+export const setMyStudyLevel = async (userId: string, studyLevel: string | null) => {
+  const membership = await getActiveMembership(userId);
+  if (!membership) throw new HttpError(403, "You do not belong to a school");
+
+  if (studyLevel !== null) {
+    const allowed = await getStudyLevels(membership.organizationId);
+    // An empty list means the school has not configured any, so anything is
+    // refused rather than silently accepted.
+    if (!allowed.includes(studyLevel)) {
+      throw new HttpError(400, "This study level is not offered by your school");
+    }
+  }
+
+  return prisma.membership.update({
+    where: { id: membership.id },
+    data: { studyLevel },
+    select: { id: true, studyLevel: true },
+  });
 };
 
 // --- Teacher dashboard -----------------------------------------------------
