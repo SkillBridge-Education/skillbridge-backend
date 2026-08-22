@@ -460,3 +460,27 @@ export const getPlatformStats = async () => {
     sessions: { total: sessions },
   };
 };
+
+/**
+ * Records a settings change in the audit trail.
+ *
+ * Kept apart from updateSettings so the audit entry names *what* changed rather
+ * than only that something did: reading "SETTINGS_UPDATED" with no detail six
+ * months later answers nothing.
+ */
+export const recordSettingsChange = async (
+  actorId: string,
+  reason: string,
+  patch: Record<string, unknown>
+): Promise<void> => {
+  await prisma.adminAuditLog.create({
+    data: {
+      actorId,
+      action: "SETTINGS_UPDATED",
+      targetType: "Platform",
+      targetId: "platform",
+      reason,
+      metadata: patch as Prisma.InputJsonValue,
+    },
+  });
+};

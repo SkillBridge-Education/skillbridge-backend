@@ -183,6 +183,7 @@ model User {
   supportTickets        SupportTicket[]  @relation("TicketSender")
   ticketsAnswered       SupportTicket[]  @relation("TicketAnswerer")
   supportReplies        SupportReply[]   @relation("ReplyAuthor")
+  settingsUpdated       PlatformSetting[] @relation("SettingEditor")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -807,4 +808,20 @@ model SupportReply {
   createdAt DateTime @default(now())
 
   @@index([ticketId, createdAt])
+}
+
+/// Platform settings, one row per key.
+///
+/// Key/value rather than a single wide row: a new setting is then an insert
+/// instead of a migration, and each value carries who last changed it — these
+/// are levers with real consequences (lowering a session's cost is handing out
+/// value), so the audit trail matters as much as the value itself.
+model PlatformSetting {
+  key   String @id
+  value String
+
+  updatedById String?
+  updatedBy   User?   @relation("SettingEditor", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  updatedAt DateTime @updatedAt
 }

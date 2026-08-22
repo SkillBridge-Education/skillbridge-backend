@@ -6,6 +6,8 @@ import { validate } from "../middleware/validate";
 import { authRateLimiter } from "../middleware/authRateLimit";
 import { getAuthenticatedUserId } from "../utils/requestHelpers";
 import { adminLogin, getAdminProfile, getTraffic } from "../services/adminAuthService";
+import { getSettings, updateSettings } from "../services/settingsService";
+import { recordSettingsChange } from "../services/adminService";
 import {
   actionReportController,
   adjustCreditsController,
@@ -155,6 +157,60 @@ adminAuthRouter.get(
     try {
       const admin = await getAdminProfile(getAuthenticatedUserId(req));
       res.status(200).json({ admin });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+// --- Platform settings -----------------------------------------------------
+
+/**
+ * Changing a setting is a privileged act with real consequences — lowering the
+ * cost of a session is handing out value — so it carries a mandatory reason and
+ * lands in the audit trail like every other admin action.
+ */
+router.get(
+  "/settings",
+  async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      res.status(200).json({ settings: await getSettings() });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+router.patch(
+  "/settings",
+  validate({
+    body: z
+      .object({
+        signupCredits: z.number().int().optional(),
+        creditsPerSessionHour: z.number().int().optional(),
+        minimumAge: z.number().int().optional(),
+        registrationOpen: z.boolean().optional(),
+        requireOrganizationApproval: z.boolean().optional(),
+        maintenanceMode: z.boolean().optional(),
+        autoSuspendThreshold: z.number().int().optional(),
+        supportEmail: z.string().trim().email().max(200).optional(),
+        reason: z.string().trim().min(10, "A reason of at least 10 characters is required").max(500),
+      })
+      .refine(
+        (body) => Object.keys(body).some((key) => key !== "reason"),
+        "At least one setting must be provided"
+      ),
+  }),
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { reason, ...patch } = req.body as { reason: string } & Record<string, unknown>;
+      const actorId = getAuthenticatedUserId(req);
+
+      const settings = await updateSettings(actorId, patch);
+
+      await recordSettingsChange(actorId, reason, patch);
+
+      res.status(200).json({ settings });
     } catch (error) {
       next(error);
     }
