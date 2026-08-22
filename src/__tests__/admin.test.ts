@@ -268,13 +268,43 @@ describe("Admin API", () => {
     });
   });
 
-  it("reports platform statistics", async () => {
+  it("reports platform statistics in the shape the dashboard reads", async () => {
     const res = await request(app)
       .get("/admin/stats")
       .set("Authorization", `Bearer ${admin.token}`);
 
     expect(res.status).toBe(200);
-    expect(res.body.stats.users.total).toBeGreaterThan(0);
-    expect(res.body.stats).toHaveProperty("queues");
+
+    // Flat, not nested: the dashboard reads these keys directly, and a nested
+    // answer made every tile read undefined and the page render blank.
+    for (const key of [
+      "totalUsers",
+      "activeUsers30d",
+      "newUsers7d",
+      "sessionsCompleted30d",
+      "creditsInCirculation",
+      "openReports",
+      "pendingOrganizations",
+      "openTickets",
+      "deltas",
+    ]) {
+      expect(res.body.stats).toHaveProperty(key);
+    }
+
+    expect(res.body.stats.totalUsers).toBeGreaterThan(0);
+    expect(res.body.stats.deltas).toHaveProperty("totalUsers");
+  });
+
+  it("returns one timeseries point per day, including empty ones", async () => {
+    const res = await request(app)
+      .get("/admin/stats/traffic?days=5")
+      .set("Authorization", `Bearer ${admin.token}`);
+
+    expect(res.status).toBe(200);
+    // A chart that skips quiet days flatters the numbers.
+    expect(res.body.traffic).toHaveLength(5);
+    expect(res.body.traffic[0]).toHaveProperty("visits");
+    expect(res.body.traffic[0]).toHaveProperty("signups");
+    expect(res.body.traffic[0]).toHaveProperty("sessions");
   });
 });
