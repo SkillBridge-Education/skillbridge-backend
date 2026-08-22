@@ -302,9 +302,15 @@ describe("Admin API", () => {
 
     expect(res.status).toBe(200);
     // A chart that skips quiet days flatters the numbers.
-    expect(res.body.traffic).toHaveLength(5);
-    expect(res.body.traffic[0]).toHaveProperty("visits");
-    expect(res.body.traffic[0]).toHaveProperty("signups");
-    expect(res.body.traffic[0]).toHaveProperty("sessions");
+    // The dashboard reads three named keys off this object; handing back a
+    // bare array made it call .map on an undefined .timeseries.
+    expect(res.body.traffic).toHaveProperty("timeseries");
+    expect(res.body.traffic).toHaveProperty("topSkills");
+    expect(res.body.traffic).toHaveProperty("usersByStatus");
+
+    expect(res.body.traffic.timeseries).toHaveLength(5);
+    expect(res.body.traffic.timeseries[0]).toHaveProperty("visits");
+    expect(res.body.traffic.timeseries[0]).toHaveProperty("signups");
+    expect(res.body.traffic.timeseries[0]).toHaveProperty("sessions");
   });
 });
