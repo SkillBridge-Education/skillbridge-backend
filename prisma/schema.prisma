@@ -35,6 +35,11 @@ enum MembershipStatus {
   // School powers are granted only from ACTIVE, so PENDING confers nothing.
   PENDING
   ACTIVE
+  // Left normally: keeps a place in the school network and stays reachable.
+  // This is the point of school mode -- a network that outlives the schooling.
+  ALUMNI
+  // Excluded. Loses access, and is not an alumnus: leaving and being removed
+  // must not produce the same state.
   REVOKED
 }
 
@@ -537,6 +542,11 @@ model Organization {
   // Details captured when a school applies, so a reviewer can tell a real
   // institution from someone claiming to be one.
   registrationNumber String?
+
+  // Study levels this school actually awards, stored as a JSON array of labels.
+  // Configurable because a lycee, a BTS and a university do not deliver the same
+  // diplomas -- a fixed list would be wrong for most of them.
+  studyLevels String?
   foundedOn          DateTime?
   address            String?
   specialties        String?
@@ -562,6 +572,14 @@ model Membership {
 
   // Identifier supplied by the school IdP (OneLogin `sub`), when provisioned by SSO.
   externalId String?
+
+  // Chosen at join time from the list the school configured. Free text rather
+  // than an enum, for the same reason the list is configurable.
+  studyLevel String?
+
+  // Set when the membership becomes ALUMNI or REVOKED, so a school can tell
+  // when someone left from when they were removed.
+  leftAt DateTime?
 
   // Delegation: the school creator can let other staff mint teacher invites,
   // without handing over the rest of the ORG_ADMIN powers.
