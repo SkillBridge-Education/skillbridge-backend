@@ -6,7 +6,7 @@ import { validate } from "../middleware/validate";
 import { authRateLimiter } from "../middleware/authRateLimit";
 import { getAuthenticatedUserId } from "../utils/requestHelpers";
 import { adminLogin, getAdminProfile } from "../services/adminAuthService";
-import { getDashboardStats, getTimeseries } from "../services/dashboardStatsService";
+import { getDashboardStats, getDashboardTraffic } from "../services/dashboardStatsService";
 import { getSettings, updateSettings } from "../services/settingsService";
 import { recordSettingsChange } from "../services/adminService";
 import {
@@ -104,7 +104,7 @@ router.get(
   validate({ query: z.object({ days: z.coerce.number().int().min(1).max(90).default(30) }) }),
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const traffic = await getTimeseries((req.query as unknown as { days: number }).days);
+      const traffic = await getDashboardTraffic((req.query as unknown as { days: number }).days);
       res.status(200).json({ traffic });
     } catch (error) {
       next(error);

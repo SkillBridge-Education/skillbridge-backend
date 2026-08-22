@@ -204,3 +204,71 @@ export const getTimeseries = async (days: number): Promise<TimeseriesPoint[]> =>
     sessions: point.sessions,
   }));
 };
+
+export interface CategoryDatum {
+  label: string;
+  value: number;
+}
+
+export interface DashboardTraffic {
+  timeseries: TimeseriesPoint[];
+  topSkills: CategoryDatum[];
+  usersByStatus: CategoryDatum[];
+}
+
+/** Skills the most people offer to teach — a read on what the platform can supply. */
+const getTopSkills = async (limit = 8): Promise<CategoryDatum[]> => {
+  const grouped = await prisma.userSkill.groupBy({
+    by: ["skillId"],
+    _count: { _all: true },
+    orderBy: { _count: { skillId: "desc" } },
+    take: limit,
+  });
+
+  if (grouped.length === 0) return [];
+
+  const skills = await prisma.skill.findMany({
+    where: { id: { in: grouped.map((row) => row.skillId) } },
+    select: { id: true, name: true },
+  });
+  const nameById = new Map(skills.map((skill) => [skill.id, skill.name]));
+
+  return grouped
+    .map((row) => ({ label: nameById.get(row.skillId) ?? "—", value: row._count._all }))
+    .filter((row) => row.label !== "—");
+};
+
+const getUsersByStatus = async (): Promise<CategoryDatum[]> => {
+  const grouped = await prisma.user.groupBy({
+    by: ["status"],
+    _count: { _all: true },
+  });
+
+  const labels: Record<string, string> = {
+    ACTIVE: "Actifs",
+    SUSPENDED: "Suspendus",
+    DELETED: "Supprimés",
+  };
+
+  return grouped.map((row) => ({
+    label: labels[row.status] ?? row.status,
+    value: row._count._all,
+  }));
+};
+
+/**
+ * The whole traffic payload the dashboard reads.
+ *
+ * Returned as one object with three named keys because that is the shape the
+ * client declares — handing back a bare array made it read `.timeseries` on an
+ * array and crash the page before it painted.
+ */
+export const getDashboardTraffic = async (days: number): Promise<DashboardTraffic> => {
+  const [timeseries, topSkills, usersByStatus] = await Promise.all([
+    getTimeseries(days),
+    getTopSkills(),
+    getUsersByStatus(),
+  ]);
+
+  return { timeseries, topSkills, usersByStatus };
+};
