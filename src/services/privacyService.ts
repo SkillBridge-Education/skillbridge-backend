@@ -4,6 +4,7 @@ import { prisma } from "../utils/prisma";
 import { HttpError } from "../utils/httpError";
 import { disconnectUser } from "../sockets";
 import { logger } from "../utils/logger";
+import { comparePassword } from "../utils/password";
 
 /**
  * GDPR data portability: everything held about the caller, in a machine-readable
@@ -125,11 +126,23 @@ export const exportUserData = async (userId: string) => {
 export const deleteAccount = async (userId: string, password?: string) => {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { id: true, status: true },
+    select: { id: true, status: true, passwordHash: true },
   });
   if (!user) throw new HttpError(404, "User not found");
   if (user.status === UserStatus.DELETED) {
     throw new HttpError(400, "This account has already been deleted");
+  }
+
+  /**
+   * The password is actually checked now.
+   *
+   * It was accepted as a parameter and then ignored, so an irreversible
+   * deletion needed nothing but a token — a phone left unlocked for a minute
+   * was enough to erase somebody's account. Re-entering the password is the
+   * standard bar for a destructive, unrecoverable action, and this is one.
+   */
+  if (!password || !(await comparePassword(password, user.passwordHash))) {
+    throw new HttpError(403, "Mot de passe incorrect");
   }
 
   const tombstone = `deleted-${randomUUID()}`;

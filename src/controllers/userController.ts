@@ -67,7 +67,7 @@ export const getById = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const user = await getPublicUserProfile(getRouteId(req));
+    const user = await getPublicUserProfile(getRouteId(req), getAuthenticatedUserId(req));
 
     res.status(200).json({ user });
   } catch (error) {
@@ -177,7 +177,13 @@ export const search = async (
     // The searchQuerySchema middleware has already coerced and bounded these.
     const { q, skill, limit, cursor } = req.query as unknown as SearchQuery;
 
-    const page = await searchUsers({ query: q, skill, limit, cursor });
+    const page = await searchUsers({
+      query: q,
+      skill,
+      limit,
+      cursor,
+      viewerId: getAuthenticatedUserId(req),
+    });
 
     // `users` is kept at the top level so existing clients keep working; the
     // cursor fields are additive.

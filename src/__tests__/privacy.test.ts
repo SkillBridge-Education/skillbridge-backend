@@ -108,6 +108,32 @@ describe("Account deletion", () => {
     expect(res.status).toBe(401);
   });
 
+  it("refuses an irreversible deletion without the password", async () => {
+    // The service took a password and ignored it, so an unlocked phone was
+    // enough to erase somebody's account permanently.
+    const res = await request(app)
+      .delete("/users/me")
+      .set("Authorization", `Bearer ${user.token}`)
+      .send({});
+
+    expect(res.status).toBe(403);
+
+    const stillActive = await prisma.user.findUniqueOrThrow({
+      where: { id: user.id },
+      select: { status: true },
+    });
+    expect(stillActive.status).toBe("ACTIVE");
+  });
+
+  it("refuses a deletion with the wrong password", async () => {
+    const res = await request(app)
+      .delete("/users/me")
+      .set("Authorization", `Bearer ${user.token}`)
+      .send({ password: "pas-le-bon-mot-de-passe" });
+
+    expect(res.status).toBe(403);
+  });
+
   it("anonymises the account rather than leaving identifying data behind", async () => {
     await prisma.user.update({
       where: { id: user.id },
@@ -116,7 +142,8 @@ describe("Account deletion", () => {
 
     const res = await request(app)
       .delete("/users/me")
-      .set("Authorization", `Bearer ${user.token}`);
+      .set("Authorization", `Bearer ${user.token}`)
+      .send({ password: "correct-horse-battery-staple" });
 
     expect(res.status).toBe(204);
 

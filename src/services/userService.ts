@@ -1,5 +1,6 @@
 import { Prisma, UserStatus } from "@prisma/client";
 import { HttpError } from "../utils/httpError";
+import { areBlocked, excludeBlockedFilter } from "./blockService";
 import { prisma } from "../utils/prisma";
 import { LearningGoalInput, SkillInput, UpdateProfileInput } from "../utils/profileValidation";
 import { toPage, toPrismaPageArgs } from "../utils/pagination";
@@ -44,9 +45,32 @@ export const getCurrentUserProfile = async (userId: string) => {
   return user;
 };
 
-export const getPublicUserProfile = async (userId: string) => {
+/**
+ * A member profile, as seen by another member.
+ *
+ * `viewerId` is what makes a block mean something here: without it the person
+ * you blocked keeps full sight of your profile, which is not what anyone
+ * pressing "Bloquer" believes they are getting.
+ *
+ * A suspended or deleted account is hidden too — it used not to be, so a
+ * profile stayed reachable by direct link after moderation removed it.
+ */
+export const getPublicUserProfile = async (userId: string, viewerId?: string) => {
   const user = await prisma.user.findUnique({ where: { id: userId }, select: publicUserSelect });
   if (!user) throw new HttpError(404, "User not found");
+
+  const visible = await prisma.user.findFirst({
+    where: { id: userId, status: UserStatus.ACTIVE },
+    select: { id: true },
+  });
+  if (!visible) throw new HttpError(404, "User not found");
+
+  // Same answer as "no such account": whether a block exists is not something
+  // the blocked person gets to confirm.
+  if (viewerId && (await areBlocked(viewerId, userId))) {
+    throw new HttpError(404, "User not found");
+  }
+
   return user;
 };
 
@@ -129,8 +153,13 @@ export const searchUsers = async (params: {
   skill?: string;
   limit: number;
   cursor?: string;
+  viewerId?: string;
 }) => {
-  const where: Prisma.UserWhereInput = { status: UserStatus.ACTIVE };
+  const where: Prisma.UserWhereInput = {
+    status: UserStatus.ACTIVE,
+    // People either side of a block disappear from each other's results.
+    ...(await excludeBlockedFilter(params.viewerId)),
+  };
   if (params.query) {
     where.OR = [
       { firstName: { contains: params.query, mode: "insensitive" } },

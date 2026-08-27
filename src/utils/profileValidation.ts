@@ -38,6 +38,49 @@ const MAX_LONG_TEXT_LENGTH  = 1000;
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+/**
+ * An avatar or banner address.
+ *
+ * These are rendered as image sources and, on some screens, as links — so an
+ * unchecked value here is stored XSS. Until now the only rule was a length
+ * limit, and `PATCH /users/me {"avatarUrl":"javascript:alert(document.cookie)"}`
+ * was accepted and stored, while the neighbouring chat-attachment field was
+ * validated strictly. Same kind of data, two regimes; this closes the gap.
+ *
+ * Uploads served by this API are the preferred form, because those images have
+ * already been sniffed and re-encoded on the way in.
+ */
+const OWN_UPLOAD_PATH = /^\/uploads\/(avatar|banner|chat)s\/[A-Za-z0-9._-]+$/;
+
+const optionalImageUrl = (
+  value: unknown,
+  field: string
+): string | null | undefined => {
+  const trimmed = optionalTrimmedString(value, field, 500);
+  if (trimmed === undefined || trimmed === null || trimmed === "") return trimmed;
+
+  if (trimmed.startsWith("/uploads/")) {
+    if (!OWN_UPLOAD_PATH.test(trimmed)) {
+      throw new HttpError(400, `${field} is not a valid upload path`);
+    }
+    return trimmed;
+  }
+
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    throw new HttpError(400, `${field} must be a valid https URL`);
+  }
+
+  // https only, and no credentials smuggled into the authority.
+  if (url.protocol !== "https:" || url.username || url.password) {
+    throw new HttpError(400, `${field} must be a valid https URL`);
+  }
+
+  return trimmed;
+};
+
 const optionalTrimmedString = (
   value: unknown,
   fieldName: string,
@@ -111,8 +154,8 @@ export const parseUpdateProfileInput = (body: unknown): UpdateProfileInput => {
     firstName,
     lastName,
     bio:          optionalTrimmedString(body.bio, "bio", MAX_LONG_TEXT_LENGTH),
-    avatarUrl:    optionalTrimmedString(body.avatarUrl, "avatarUrl", 500),
-    bannerUrl:    optionalTrimmedString(body.bannerUrl, "bannerUrl", 500),
+    avatarUrl:    optionalImageUrl(body.avatarUrl, "avatarUrl"),
+    bannerUrl:    optionalImageUrl(body.bannerUrl, "bannerUrl"),
     availability: optionalTrimmedString(body.availability, "availability", 2000),
     dateOfBirth:  optionalDateOfBirth(body.dateOfBirth),
   };
