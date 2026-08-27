@@ -1,0 +1,109 @@
+name: Revue automatique
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+
+# Une seule revue en vol par PR : pousser trois commits d'affilee ne doit pas
+# lancer trois revues qui se marchent dessus.
+concurrency:
+  group: revue-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  revue:
+    # Les brouillons ne sont pas relus : on relit ce qui est propose, pas ce
+    # qui est en cours d'ecriture.
+    if: >-
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+
+    steps:
+      # Sans cle, on ne fait pas echouer la PR : une revue absente est un
+      # probleme de configuration, pas un defaut du code propose.
+      - name: Verifier la cle
+        id: cle
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "presente=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Secret GEMINI_API_KEY absent. A creer sur aistudio.google.com puis dans Settings -> Secrets and variables -> Actions. Revue ignoree."
+          else
+            echo "presente=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Revue
+        if: steps.cle.outputs.presente == 'true'
+        uses: qodo-ai/pr-agent@main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+          # Palier gratuit de Google AI Studio. Flash plutot que Pro : le quota
+          # gratuit y est bien plus large, et une revue de diff n'a pas besoin
+          # du plus gros modele.
+          CONFIG.MODEL: "gemini/gemini-2.5-flash"
+          CONFIG.FALLBACK_MODELS: '["gemini/gemini-2.0-flash"]'
+          GOOGLE_AI_STUDIO.GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+          # Ce qui tourne tout seul a l'ouverture d'une PR.
+          GITHUB_ACTION_CONFIG.AUTO_REVIEW: "true"
+          GITHUB_ACTION_CONFIG.AUTO_DESCRIBE: "false"
+          GITHUB_ACTION_CONFIG.AUTO_IMPROVE: "false"
+
+          # On ne reecrit pas le titre ni la description : c'est a l'auteur de
+          # dire ce qu'il propose, et une description generee masque le fait
+          # qu'il n'y a pas reflechi.
+          PR_REVIEWER.REQUIRE_SCORE_REVIEW: "true"
+          PR_REVIEWER.REQUIRE_TESTS_REVIEW: "true"
+          PR_REVIEWER.REQUIRE_SECURITY_REVIEW: "true"
+          PR_REVIEWER.PERSISTENT_COMMENT: "true"
+          PR_REVIEWER.FINAL_UPDATE_MESSAGE: "false"
+
+          PR_REVIEWER.EXTRA_INSTRUCTIONS: |
+            Reponds en francais.
+
+            Depot : API Express 5 en TypeScript, Prisma 7, PostgreSQL, Socket.IO.
+
+            Signale ce qui casse quelque chose, jamais le style : correction,
+            securite, coherence avec l'architecture existante, et le fait que
+            le code fasse reellement ce que son message annonce.
+
+            Ce projet a des utilisateurs de 15 a 18 ans et des obligations RGPD
+            et DSA. Traite comme critique tout ce qui expose des donnees
+            personnelles, contourne la verification d'age, ou rend une
+            fonctionnalite de securite decorative.
+
+            Points d'attention propres a ce depot :
+
+            - Toute route qui lit ou ecrit des donnees d'un membre doit exiger
+              un jeton. Une route publique qui renvoie des profils est un
+              annuaire de mineurs.
+            - L'etablissement (organizationId) se lit depuis le compte
+              appelant, jamais depuis le corps ou l'URL de la requete.
+            - Les credits passent par grantCredits et spendCredits, jamais par
+              un increment brut : le plafond est une contrainte SQL, et la
+              contourner fait echouer toute la transaction.
+            - Une transition d'etat doit etre revendiquee dans la transaction
+              qui la paie, sinon deux requetes concurrentes la reglent deux
+              fois.
+            - Tout ce qui vient du client passe par un schema zod. Les cles non
+              declarees sont supprimees en silence : un champ ajoute au client
+              sans etre ajoute au schema disparait sans aucune erreur.
+
+            Un point de methode : une fonctionnalite peut etre entierement
+            ecrite et testee cote service, et n'etre montee sur aucune route.
+            C'est arrive sur ce projet -- quatre actions du chat repondaient
+            404 alors que leurs tests unitaires passaient. Quand une PR ajoute
+            un service, verifie qu'une route l'expose reellement.
+
+            Classe chaque probleme : CRITIQUE, MAJEUR ou MINEUR. Dis
+            explicitement, en une phrase a la fin, si tu considererais cette PR
+            comme fusionnable en l'etat.
