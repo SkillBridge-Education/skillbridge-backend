@@ -80,11 +80,26 @@ const requireMembership = async (
   return { organizationId: membership.organizationId, orgRole: membership.orgRole };
 };
 
-export const requireTeacher = (userId: string) =>
-  requireMembership(userId, [OrgRole.TEACHER, OrgRole.ORG_ADMIN]);
+/**
+ * Every role that administers a school.
+ *
+ * ORG_SUPER_ADMIN is the account that registered the institution, so leaving it
+ * out of these lists would lock the founder out of their own structure — the one
+ * person who must never lose access.
+ */
+const ADMIN_ROLES: OrgRole[] = [OrgRole.ORG_ADMIN, OrgRole.ORG_SUPER_ADMIN];
 
-export const requireOrgAdmin = (userId: string) =>
-  requireMembership(userId, [OrgRole.ORG_ADMIN]);
+export const requireTeacher = (userId: string) =>
+  requireMembership(userId, [OrgRole.TEACHER, ...ADMIN_ROLES]);
+
+export const requireOrgAdmin = (userId: string) => requireMembership(userId, ADMIN_ROLES);
+
+/**
+ * Powers that stay with the founder: appointing administrators, and changing who
+ * the founder is. Delegating these would make the distinction meaningless.
+ */
+export const requireOrgSuperAdmin = (userId: string) =>
+  requireMembership(userId, [OrgRole.ORG_SUPER_ADMIN]);
 
 // --- Joining a school (sign-up flow) ---------------------------------------
 
@@ -192,7 +207,7 @@ export const listMembers = async (
 ) => {
   const { organizationId } = await requireMembership(actorId, [
     OrgRole.TEACHER,
-    OrgRole.ORG_ADMIN,
+    ...ADMIN_ROLES,
   ]);
 
   return prisma.membership.findMany({
