@@ -68,7 +68,8 @@ export const createMessageController = async (
     const userId = getAuthenticatedUserId(req);
     const conversationId = req.params.id as string;
     const body = req.body.body as string;
-    const data = await createMessageService(conversationId, userId, body);
+    const replyToId = req.body.replyToId as string | undefined;
+    const data = await createMessageService(conversationId, userId, body, replyToId);
     res.status(201).json(data);
   } catch (error) {
     next(error);
@@ -85,7 +86,9 @@ export const sendFileMessageController = async (
     const userId = getAuthenticatedUserId(req);
     const conversationId = req.params.id as string;
     const fileUrl = req.body.fileUrl as string;
-    const data = await sendFileMessageService(conversationId, userId, fileUrl);
+    const fileName = req.body.fileName as string | undefined;
+    const replyToId = req.body.replyToId as string | undefined;
+    const data = await sendFileMessageService(conversationId, userId, fileUrl, fileName, replyToId);
     res.status(201).json(data);
   } catch (error) {
     next(error);

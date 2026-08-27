@@ -2,6 +2,8 @@ import { prisma } from "../utils/prisma";
 import { HttpError } from "../utils/httpError";
 import { createNotificationService } from "./notificationsService";
 import { emitToUser } from "../sockets";
+import { messageSelect, resolveReplyTarget } from "./messageShape";
+import { assertNotBlocked } from "./blockService";
 
 /**
  * Returns all conversations the user participates in, with the last message
@@ -101,9 +103,7 @@ export const listMessagesService = async (
   return prisma.message.findMany({
     where: { conversationId },
     orderBy: { createdAt: "asc" },
-    include: {
-      sender: { select: { id: true, firstName: true, lastName: true } },
-    },
+    select: messageSelect,
   });
 };
 
@@ -114,7 +114,8 @@ export const listMessagesService = async (
 export const createMessageService = async (
   conversationId: string,
   userId: string,
-  body: string
+  body: string,
+  replyToId?: string
 ) => {
   const conversation = await prisma.conversation.findUnique({
     where: { id: conversationId },
@@ -131,15 +132,22 @@ export const createMessageService = async (
     throw new HttpError(400, "Message body cannot be empty");
   }
 
+  const otherId =
+    conversation.firstUserId === userId
+      ? conversation.secondUserId
+      : conversation.firstUserId;
+  await assertNotBlocked(userId, otherId);
+
+  const replyTargetId = await resolveReplyTarget(conversationId, replyToId);
+
   const message = await prisma.message.create({
     data: {
       conversationId,
       senderId: userId,
       body: body.trim(),
+      replyToId: replyTargetId,
     },
-    include: {
-      sender: { select: { id: true, firstName: true, lastName: true } },
-    },
+    select: messageSelect,
   });
 
   // Notifier l'autre participant
@@ -211,7 +219,9 @@ export const deleteConversationService = async (
 export const sendFileMessageService = async (
   conversationId: string,
   userId: string,
-  fileUrl: string
+  fileUrl: string,
+  fileName?: string,
+  replyToId?: string
 ) => {
   const conversation = await prisma.conversation.findUnique({
     where: { id: conversationId },
@@ -228,17 +238,25 @@ export const sendFileMessageService = async (
     throw new HttpError(400, "File URL cannot be empty");
   }
 
+  const blockedOtherId =
+    conversation.firstUserId === userId
+      ? conversation.secondUserId
+      : conversation.firstUserId;
+  await assertNotBlocked(userId, blockedOtherId);
+
+  const replyTargetId = await resolveReplyTarget(conversationId, replyToId);
+
   const message = await prisma.message.create({
     data: {
       conversationId,
       senderId: userId,
       body: fileUrl,
       fileUrl: fileUrl.trim(),
+      fileName: fileName?.trim() || null,
       type: "FILE",
+      replyToId: replyTargetId,
     },
-    include: {
-      sender: { select: { id: true, firstName: true, lastName: true } },
-    },
+    select: messageSelect,
   });
 
   const recipientId =

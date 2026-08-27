@@ -1,6 +1,7 @@
 import { prisma } from "../utils/prisma";
 import { HttpError } from "../utils/httpError";
 import { emitToUser } from "../sockets";
+import { messageSelect } from "./messageShape";
 
 /**
  * Editing, deleting and pinning messages.
@@ -49,31 +50,6 @@ const loadMessage = async (conversationId: string, messageId: string) => {
   return message;
 };
 
-/** Shape returned to clients and broadcast over the socket. */
-const messageSelect = {
-  id: true,
-  conversationId: true,
-  senderId: true,
-  body: true,
-  type: true,
-  fileUrl: true,
-  fileName: true,
-  createdAt: true,
-  editedAt: true,
-  deletedForEveryone: true,
-  pinnedAt: true,
-  replyToId: true,
-  replyTo: {
-    select: {
-      id: true,
-      body: true,
-      senderId: true,
-      deletedForEveryone: true,
-      sender: { select: { id: true, firstName: true, lastName: true } },
-    },
-  },
-  sender: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
-};
 
 const broadcast = async (
   conversationId: string,
