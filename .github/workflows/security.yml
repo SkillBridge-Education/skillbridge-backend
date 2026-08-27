@@ -66,4 +66,63 @@ jobs:
         with:
           languages: javascript-typescript
 
+      # `upload: false` parce que publier des alertes de securite sur un depot
+      # prive demande GitHub Advanced Security, absent du plan gratuit.
+      # L'analyse aboutissait, seul l'envoi echouait -- et le job finissait
+      # rouge a chaque execution alors que rien n'etait casse. Un check
+      # toujours rouge cesse d'etre lu, ce qui est pire que pas de check.
       - uses: github/codeql-action/analyze@v3
+        with:
+          upload: false
+          output: rapport-codeql
+
+      # On lit donc le rapport ici. Seules les regles de gravite haute ou
+      # critique font echouer : bloquer sur chaque avertissement de style
+      # apprend a ignorer le job.
+      - name: Lire le rapport CodeQL
+        run: |
+          python3 - <<'PY'
+          import glob, json, sys
+
+          fichiers = glob.glob("rapport-codeql/*.sarif")
+          if not fichiers:
+              print("Aucun rapport produit.")
+              sys.exit(0)
+
+          graves = []
+          for chemin in fichiers:
+              with open(chemin, encoding="utf-8") as f:
+                  sarif = json.load(f)
+
+              for run in sarif.get("runs", []):
+                  regles = {
+                      r["id"]: r
+                      for r in run.get("tool", {})
+                      .get("driver", {})
+                      .get("rules", [])
+                  }
+                  for res in run.get("results", []):
+                      regle = regles.get(res.get("ruleId"), {})
+                      props = regle.get("properties", {})
+                      try:
+                          severite = float(props.get("security-severity", 0))
+                      except (TypeError, ValueError):
+                          severite = 0.0
+
+                      if severite >= 7.0:
+                          lieux = res.get("locations", [{}])
+                          phys = lieux[0].get("physicalLocation", {})
+                          fichier = phys.get("artifactLocation", {}).get("uri", "?")
+                          ligne = phys.get("region", {}).get("startLine", "?")
+                          graves.append(
+                              f"{fichier}:{ligne} — {res.get('message', {}).get('text', res.get('ruleId'))}"
+                          )
+
+          if graves:
+              print(f"::error::CodeQL : {len(graves)} probleme(s) de gravite haute ou critique.")
+              for g in graves:
+                  print(f"  - {g}")
+              sys.exit(1)
+
+          print("CodeQL : aucun probleme de gravite haute ou critique.")
+          PY
