@@ -30,6 +30,12 @@ export interface DashboardStats {
   openReports: number;
   pendingOrganizations: number;
   openTickets: number;
+  /**
+   * Recours en attente. Compté au meme titre que les signalements : chaque jour
+   * ou un recours dort est un jour de suspension de plus pour quelqu'un qui a
+   * peut-etre raison.
+   */
+  openAppeals: number;
   deltas: {
     totalUsers: number;
     activeUsers30d: number;
@@ -85,6 +91,7 @@ export const getDashboardStats = async (): Promise<DashboardStats> => {
     openReports,
     pendingOrganizations,
     openTickets,
+    openAppeals,
     active30d,
     activePrev30d,
   ] = await Promise.all([
@@ -106,6 +113,7 @@ export const getDashboardStats = async (): Promise<DashboardStats> => {
     prisma.report.count({ where: { status: { in: ["PENDING", "REVIEWING"] } } }),
     prisma.organization.count({ where: { status: "PENDING" } }),
     prisma.supportTicket.count({ where: { status: "OPEN" } }),
+    prisma.appeal.count({ where: { status: "PENDING" } }),
     activeUserCount(d30, now),
     activeUserCount(d60, d30),
   ]);
@@ -129,6 +137,7 @@ export const getDashboardStats = async (): Promise<DashboardStats> => {
     openReports,
     pendingOrganizations,
     openTickets,
+    openAppeals,
     deltas: {
       totalUsers: delta(totalUsers, totalUsersBefore),
       activeUsers30d: delta(active30d, activePrev30d),

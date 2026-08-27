@@ -27,6 +27,16 @@ export interface Page<T> {
   items: T[];
   nextCursor: string | null;
   hasMore: boolean;
+  /**
+   * How many rows match in total, when the caller asked for it.
+   *
+   * Cursor pages deliberately avoid a count — it is a second query on every
+   * scroll, and a feed does not need one. A back-office does: a moderator
+   * seeing "23 signalements" is being told something, and the admin client was
+   * rendering `formatNumber(undefined)` as the literal text "NaN" because this
+   * was never sent.
+   */
+  total?: number;
 }
 
 /**
@@ -43,7 +53,8 @@ export const toPrismaPageArgs = ({ limit, cursor }: PaginationQuery) => ({
  */
 export const toPage = <T extends { id: string }>(
   rows: T[],
-  limit: number
+  limit: number,
+  total?: number
 ): Page<T> => {
   const hasMore = rows.length > limit;
   const items = hasMore ? rows.slice(0, limit) : rows;
@@ -52,5 +63,6 @@ export const toPage = <T extends { id: string }>(
     items,
     hasMore,
     nextCursor: hasMore ? items[items.length - 1].id : null,
+    ...(total === undefined ? {} : { total }),
   };
 };

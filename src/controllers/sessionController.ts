@@ -11,6 +11,7 @@ import {
   joinSessionService,
   removeParticipantSessionService,
   acceptSessionService,
+  cancelSessionService,
   refuseSessionService,
   updateSessionService,
 } from "../services/sessionService";
@@ -339,6 +340,23 @@ export const getParticipantsSessionController = async (
 
     const participants = await getParticipantsSessionService(sessionId, requesterId);
     res.status(200).json({ participants });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// POST /sessions/:id/cancel
+export const cancelSessionController = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const session = await cancelSessionService(
+      req.params.id as string,
+      getAuthenticatedUserId(req)
+    );
+    res.status(200).json(session);
   } catch (error) {
     next(error);
   }

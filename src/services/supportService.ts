@@ -84,7 +84,11 @@ export const listTickets = async (params: {
     ...toPrismaPageArgs(params),
   });
 
-  return toPage(rows, params.limit);
+  // Compte total, pour que la liste puisse annoncer combien de lignes
+  // correspondent plutot que d'afficher "NaN".
+  const total = await prisma.supportTicket.count({ where: params.status ? { status: params.status } : {} });
+
+  return toPage(rows, params.limit, total);
 };
 
 export const replyToTicket = async (adminId: string, ticketId: string, body: string) => {

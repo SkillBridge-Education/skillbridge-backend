@@ -19,6 +19,7 @@ import {
   getSessionsController,
   getSessionController,
   acceptSessionController,
+  cancelSessionController,
   refuseSessionController,
   updateSessionController,
 } from "../controllers/sessionController";
@@ -36,6 +37,9 @@ router.post("/:id/end",    authenticate, withId, validate({ body: endSessionSche
 router.post("/:id/join",   authenticate, withId, joinSessionController);
 router.post("/:id/accept", authenticate, withId, acceptSessionController);
 router.post("/:id/refuse", authenticate, withId, refuseSessionController);
+// Cancelling a session that has not started, from either side. Refunds the
+// learner when the booking had already been paid for.
+router.post("/:id/cancel", authenticate, withId, cancelSessionController);
 router.post("/:id/rating", authenticate, withId, createSessionRatingController);
 router.post("/:id/participants", authenticate, withId, addParticipantSessionController);
 router.delete("/:id/participants/:userId", authenticate, withId, removeParticipantSessionController);

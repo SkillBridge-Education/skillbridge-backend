@@ -12,6 +12,8 @@ import moderationRoutes from "./moderationRoutes";
 import organizationRoutes from "./organizationRoutes";
 import statsRoutes from "./statsRoutes";
 import joinCodeRoutes from "./joinCodeRoutes";
+import establishmentRoutes from "./establishmentRoutes";
+import campusLifeRoutes from "./campusLifeRoutes";
 import uploadRoutes from "./uploadRoutes";
 import favoriteRoutes from "./favoriteRoutes";
 import { adminSupportRouter, supportRouter } from "./supportRoutes";
@@ -32,6 +34,13 @@ router.use("/admin/auth", adminAuthRouter);
 router.use("/admin/support", adminSupportRouter);
 router.use("/admin", adminRoutes);
 router.use("/", moderationRoutes);
+// Registered before the broader /school router: this one owns "/apply",
+// "/my-application" and "/access-codes", and a prefix collision would silently
+// hand those paths to whichever router was mounted first.
+router.use("/school", establishmentRoutes);
+// Cours et evenements : l'etablissement est toujours lu depuis l'adhesion du
+// demandeur, jamais recu du client.
+router.use("/school", campusLifeRoutes);
 router.use("/school", organizationRoutes);
 router.use("/stats", statsRoutes);
 // Mounted under its own prefix rather than /school: both routers define a

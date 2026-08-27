@@ -1,6 +1,7 @@
 import { Prisma, UserStatus } from "@prisma/client";
 import { prisma } from "../utils/prisma";
 import { HttpError } from "../utils/httpError";
+import { finaliseEstablishmentApproval } from "./establishmentService";
 import { grantCredits, spendCredits } from "./creditService";
 import { disconnectUser } from "../sockets";
 import { toPage, toPrismaPageArgs } from "../utils/pagination";
@@ -78,7 +79,13 @@ export const listUsers = async (params: {
     ...toPrismaPageArgs(params),
   });
 
-  return toPage(rows, params.limit);
+  // Compte total, pour que la liste puisse annoncer combien de lignes
+  // correspondent plutot que d'afficher "NaN". Le meme `where` que la requete :
+  // compter sur un filtre different annoncerait un total qui ne correspond pas
+  // a ce qui est affiche.
+  const total = await prisma.user.count({ where });
+
+  return toPage(rows, params.limit, total);
 };
 
 export const getUserForAdmin = async (userId: string) => {
@@ -240,7 +247,11 @@ export const listReports = async (params: {
     ...toPrismaPageArgs(params),
   });
 
-  return toPage(rows, params.limit);
+  // Compte total, pour que la liste puisse annoncer combien de lignes
+  // correspondent plutot que d'afficher "NaN".
+  const total = await prisma.report.count({ where: params.status ? { status: params.status } : {} });
+
+  return toPage(rows, params.limit, total);
 };
 
 const resolveReport = (action: "ACTIONED" | "DISMISSED") =>
@@ -294,7 +305,11 @@ export const listOrganizations = async (params: {
     ...toPrismaPageArgs(params),
   });
 
-  return toPage(rows, params.limit);
+  // Compte total, pour que la liste puisse annoncer combien de lignes
+  // correspondent plutot que d'afficher "NaN".
+  const total = await prisma.organization.count({ where: params.status ? { status: params.status } : {} });
+
+  return toPage(rows, params.limit, total);
 };
 
 const reviewOrganization = (status: "ACTIVE" | "REJECTED") =>
@@ -335,6 +350,10 @@ const reviewOrganization = (status: "ACTIVE" | "REJECTED") =>
     // would hold the row lock for as long as that takes.
     if (status === "ACTIVE") {
       await assignJoinCode(organizationId);
+      // Mints SB-XXXX-XXXXX and makes the applicant the school's super admin.
+      // Outside the transaction for the same reason as the join code: allocating
+      // a unique identifier retries, and retrying under a row lock is worse.
+      await finaliseEstablishmentApproval(organizationId);
     }
 
     return result;
@@ -360,7 +379,11 @@ export const listAppeals = async (params: {
     ...toPrismaPageArgs(params),
   });
 
-  return toPage(rows, params.limit);
+  // Compte total, pour que la liste puisse annoncer combien de lignes
+  // correspondent plutot que d'afficher "NaN".
+  const total = await prisma.appeal.count({ where: params.status ? { status: params.status } : {} });
+
+  return toPage(rows, params.limit, total);
 };
 
 /**
@@ -433,7 +456,9 @@ export const listAuditLog = async (params: {
     ...toPrismaPageArgs(params),
   });
 
-  return toPage(rows, params.limit);
+  const total = await prisma.adminAuditLog.count({ where });
+
+  return toPage(rows, params.limit, total);
 };
 
 // --- Dashboard stats -------------------------------------------------------
