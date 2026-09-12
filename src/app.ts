@@ -6,6 +6,7 @@ import { globalRateLimiter } from "./middleware/rateLimit";
 import { logger } from "./utils/logger";
 import { pinoHttp } from "pino-http";
 import routes from "./routes";
+import { stripeWebhookRouter } from "./routes/paymentRoutes";
 import { env } from "./utils/env";
 import { uploadDirectory } from "./services/uploadService";
 
@@ -26,6 +27,19 @@ app.use(
     credentials: true
   })
 );
+
+/**
+ * La notification de paiement, montee AVANT le parseur JSON.
+ *
+ * Stripe signe le corps brut de la requete. Si express.json() l'a deja parse,
+ * le corps disponible est un objet : la signature calculee dessus ne
+ * correspondra jamais, et l'integration echouera avec un « signature
+ * invalide » permanent qu'aucune verification du secret n'explique.
+ *
+ * C'est la raison, et la seule, pour laquelle cette route ne vit pas avec les
+ * autres.
+ */
+app.use("/payments", stripeWebhookRouter);
 
 // express.json() allows Express to read JSON request bodies from clients.
 // The size cap stops a single request from exhausting memory.

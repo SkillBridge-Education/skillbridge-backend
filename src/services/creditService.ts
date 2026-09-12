@@ -1,7 +1,27 @@
 import { Prisma } from "@prisma/client";
 import { HttpError } from "../utils/httpError";
 
-export const MAX_CREDITS = 500;
+/**
+ * Le plafond d'un compte qui n'a jamais rien achete.
+ *
+ * Ce n'est plus la limite absolue du systeme : chaque compte porte le sien dans
+ * `User.creditCap`, et un achat le fait monter. Cette constante reste la valeur
+ * de depart, et sert la ou il faut une borne avant de connaitre le compte --
+ * la validation d'une reservation de session, par exemple.
+ */
+export const DEFAULT_CREDIT_CAP = 500;
+
+/** @deprecated Utiliser DEFAULT_CREDIT_CAP, ou le plafond du compte concerne. */
+export const MAX_CREDITS = DEFAULT_CREDIT_CAP;
+
+/**
+ * Arrondit un plafond au palier de cent superieur.
+ *
+ * Acheter 550 credits porte le plafond a 600 et non a 550 : un plafond qui colle
+ * exactement au solde se remplirait des le premier credit gagne ensuite, et le
+ * bonus de l'achat aurait disparu avant d'avoir servi.
+ */
+export const arrondirPlafond = (valeur: number): number => Math.ceil(valeur / 100) * 100;
 
 const validateCreditAmount = (amount: number): void => {
   if (!Number.isInteger(amount) || amount < 0) {
@@ -16,10 +36,13 @@ export const grantCredits = async (
 ): Promise<number> => {
   validateCreditAmount(amount);
 
+  // Le plafond du compte, lu dans la meme instruction : aller le chercher
+  // d'abord laisserait une fenetre ou un achat concurrent le ferait monter
+  // sans que ce versement en profite.
   const users = await transaction.$queryRaw<Array<{ credits: number }>>(
     Prisma.sql`
       UPDATE "User"
-      SET "credits" = LEAST(${MAX_CREDITS}, "credits" + ${amount})
+      SET "credits" = LEAST("creditCap", "credits" + ${amount})
       WHERE "id" = ${userId}
       RETURNING "credits"
     `
@@ -39,9 +62,9 @@ export const grantCreditsWithActualAmount = async (
 ): Promise<number> => {
   validateCreditAmount(amount);
 
-  const users = await transaction.$queryRaw<Array<{ credits: number }>>(
+  const users = await transaction.$queryRaw<Array<{ credits: number; creditCap: number }>>(
     Prisma.sql`
-      SELECT "credits"
+      SELECT "credits", "creditCap"
       FROM "User"
       WHERE "id" = ${userId}
       FOR UPDATE
@@ -53,7 +76,7 @@ export const grantCreditsWithActualAmount = async (
   }
 
   const currentCredits = users[0].credits;
-  const nextCredits = Math.min(MAX_CREDITS, currentCredits + amount);
+  const nextCredits = Math.min(users[0].creditCap, currentCredits + amount);
 
   if (nextCredits !== currentCredits) {
     await transaction.user.update({

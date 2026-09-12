@@ -50,6 +50,21 @@ export const env = {
   gmailUser:         process.env.GMAIL_USER ?? "",
   gmailAppPassword:  process.env.GMAIL_APP_PASSWORD ?? "",
   requireEmailVerification: process.env.REQUIRE_EMAIL_VERIFICATION === "true",
+
+  /**
+   * Paiement. Vides = achat desactive, et rien d'autre ne change.
+   *
+   * La cle secrete ne quitte jamais ce serveur. La cle publiable, elle, est
+   * faite pour etre exposee -- mais l'application n'en a meme pas besoin :
+   * c'est Stripe qui heberge la page de paiement, et le serveur ne renvoie
+   * qu'une adresse a ouvrir.
+   *
+   * Le secret du webhook est distinct de la cle secrete : il sert uniquement a
+   * verifier que les notifications viennent bien de Stripe. Sans lui, la route
+   * est publique et n'importe qui pourrait s'attribuer des credits.
+   */
+  stripeSecretKey: process.env.STRIPE_SECRET_KEY?.trim() || "",
+  stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET?.trim() || "",
   logLevel: process.env.LOG_LEVEL,
   // Empty means error tracking stays off; nothing else changes.
   sentryDsn: process.env.SENTRY_DSN?.trim() || "",

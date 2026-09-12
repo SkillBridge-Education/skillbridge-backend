@@ -195,6 +195,14 @@ model User {
   notifications Notification[]
 
   credits Int @default(120)
+
+  /// Le plafond de ce compte, et non une constante partagee.
+  ///
+  /// Il monte a l'achat et n'en redescend jamais : c'est ce qui donne a un achat
+  /// une valeur qui survit a la consommation des credits eux-memes. Le plafond
+  /// existe pour empecher l'accumulation par le jeu du systeme, pas pour punir
+  /// quelqu'un qui a paye.
+  creditCap Int @default(500)
   averageRating Float @default(0)
   totalRatings  Int   @default(0)
 

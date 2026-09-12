@@ -258,8 +258,10 @@ describe("Admin API", () => {
     it("exposes no route that writes to the trail", async () => {
       // A trail that can be rewritten proves nothing, so these must not exist.
       for (const method of ["post", "patch", "delete"] as const) {
-        const res = await request(app)
-          [method]("/admin/audit")
+        // Le nom de methode est calcule : l'appel tient sur une ligne, sinon
+        // le retour a la ligne avant `[` se lit comme un acces d'index sur
+        // l'expression precedente -- ce que l'analyseur signale a juste titre.
+        const res = await request(app)[method]("/admin/audit")
           .set("Authorization", `Bearer ${admin.token}`)
           .send({ action: "FORGED" });
 

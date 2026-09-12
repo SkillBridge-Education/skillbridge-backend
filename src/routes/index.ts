@@ -15,6 +15,7 @@ import joinCodeRoutes from "./joinCodeRoutes";
 import establishmentRoutes from "./establishmentRoutes";
 import campusLifeRoutes from "./campusLifeRoutes";
 import uploadRoutes from "./uploadRoutes";
+import paymentRoutes from "./paymentRoutes";
 import favoriteRoutes from "./favoriteRoutes";
 import { adminSupportRouter, supportRouter } from "./supportRoutes";
 import notificationRoutes from "./notificationRoutes";
@@ -48,6 +49,8 @@ router.use("/stats", statsRoutes);
 // join would have been unreachable.
 router.use("/school/codes", joinCodeRoutes);
 router.use("/uploads", uploadRoutes);
+// Le webhook, lui, est monte dans app.ts avant le parseur JSON.
+router.use("/payments", paymentRoutes);
 router.use("/favorites", favoriteRoutes);
 router.use("/support", supportRouter);
 

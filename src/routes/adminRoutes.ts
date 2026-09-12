@@ -20,7 +20,6 @@ import {
   approveOrganizationController,
   banUserController,
   dismissReportController,
-  getStatsController,
   getUserController,
   listAppealsController,
   listAuditController,

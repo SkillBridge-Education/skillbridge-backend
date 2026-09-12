@@ -1,6 +1,4 @@
 import { MembershipStatus, Prisma } from "@prisma/client";
-import { prisma } from "../utils/prisma";
-import { MAX_CREDITS } from "./creditService";
 
 /**
  * Loyalty reward and school-mode exemption.
@@ -40,10 +38,11 @@ export const isSchoolSession = async (
 /**
  * Grants the loyalty bonus when a teacher crosses the threshold, once.
  *
- * Deliberately bypasses the MAX_CREDITS ceiling: the reward is meant to be felt,
- * and capping it would silently pay less than advertised to exactly the people
- * who earned it most. The database CHECK allows values up to MAX_CREDITS, so the
- * bonus is written with a raw update and its own bound.
+ * The reward raises the account's own ceiling rather than being clamped by it.
+ * Capping it would silently pay less than advertised to exactly the people who
+ * earned it most -- and now that ceilings are per account, lifting it is the
+ * honest way to say so: the credits arrive, and the room to hold them arrives
+ * with them.
  *
  * Idempotent: keyed on the count of completed sessions, and skipped when a
  * reward transaction already exists for this threshold.
@@ -72,12 +71,18 @@ export const grantLoyaltyRewardIfDue = async (
     data: { userId: teacherId, amount: REWARD_CREDITS, type: "EARNED", description },
   });
 
-  // The reward may exceed the normal ceiling, so it is applied directly rather
-  // than through grantCredits, which would clamp it to MAX_CREDITS.
-  const hardCeiling = MAX_CREDITS + REWARD_CREDITS;
+  /**
+   * Le plafond monte avec la prime, dans la meme instruction.
+   *
+   * Verser deux cents credits a quelqu'un dont le solde est deja au plafond
+   * reviendrait a ne rien verser du tout. On leve donc le plafond juste assez
+   * pour accueillir la prime, arrondi au palier de cent superieur, et il n'en
+   * redescend pas -- c'est une recompense, pas un pret.
+   */
   await tx.$executeRaw`
     UPDATE "User"
-    SET "credits" = LEAST(${hardCeiling}, "credits" + ${REWARD_CREDITS})
+    SET "creditCap" = GREATEST("creditCap", CEIL(("credits" + ${REWARD_CREDITS})::numeric / 100) * 100),
+        "credits"   = "credits" + ${REWARD_CREDITS}
     WHERE "id" = ${teacherId}
   `;
 
