@@ -99,15 +99,16 @@ export const apercuAchat = async (userId: string, packId: string) => {
 /**
  * Verse un lot paye, une seule fois.
  *
- * `reference` identifie le paiement chez le prestataire. L'unicite est portee
- * par la base et non par ce code : un prestataire de paiement rejoue ses
- * notifications -- Stripe le fait explicitement, plusieurs fois, jusqu'a
- * recevoir un accuse -- et sans cette garantie un meme paiement crediterait
- * deux ou trois fois.
+ * L'unicite est portee par la base -- `@@unique([provider, reference])` -- et
+ * non par une lecture prealable. La difference compte : un prestataire de
+ * paiement rejoue ses notifications, Stripe explicitement et plusieurs fois
+ * jusqu'a recevoir un accuse, et deux notifications arrivees en meme temps
+ * passeraient toutes les deux un simple « est-ce que ca existe deja ? ». Seule
+ * une contrainte empeche reellement le double versement.
  *
- * Le plafond monte avec le solde et n'en redescend pas. C'est la partie de
- * l'achat qui survit a la depense : on garde la capacite meme une fois les
- * credits consommes.
+ * Le plafond monte avec le solde et n'en redescend pas : c'est la partie de
+ * l'achat qui survit a la depense. On enregistre sa valeur avant et apres, pour
+ * qu'une reclamation reste verifiable un an plus tard.
  */
 export const crediterAchat = async (input: {
   userId: string;
@@ -118,43 +119,94 @@ export const crediterAchat = async (input: {
 }) => {
   const pack = packById(input.packId);
 
-  return prisma.$transaction(async (tx) => {
-    const dejaVu = await tx.rewardTransaction.findFirst({
-      where: { description: { contains: input.reference } },
-      select: { id: true },
+  try {
+    return await prisma.$transaction(async (tx) => {
+      const avant = await tx.user.findUnique({
+        where: { id: input.userId },
+        select: { credits: true, creditCap: true },
+      });
+      if (!avant) throw new HttpError(404, "Compte introuvable");
+
+      const rows = await tx.$queryRaw<Array<{ credits: number; creditCap: number }>>(
+        Prisma.sql`
+          UPDATE "User"
+          SET "creditCap" = GREATEST("creditCap", CEIL(("credits" + ${pack.credits})::numeric / 100) * 100),
+              "credits"   = "credits" + ${pack.credits}
+          WHERE "id" = ${input.userId}
+          RETURNING "credits", "creditCap"
+        `
+      );
+      const apres = rows[0]!;
+
+      // La creation echoue si ce paiement a deja ete credite, ce qui annule
+      // tout le versement ci-dessus. C'est exactement le comportement voulu.
+      await tx.creditPurchase.create({
+        data: {
+          userId: input.userId,
+          packId: pack.id,
+          credits: pack.credits,
+          amountCents: input.amountCents,
+          currency: pack.currency,
+          provider: input.provider,
+          reference: input.reference,
+          capBefore: avant.creditCap,
+          capAfter: apres.creditCap,
+        },
+      });
+
+      // Double ecriture assumee : la table d'achats porte la comptabilite,
+      // l'historique de transactions reste ce que l'utilisateur lit dans
+      // l'application a cote de ses sessions.
+      await tx.rewardTransaction.create({
+        data: {
+          userId: input.userId,
+          amount: pack.credits,
+          type: "EARNED",
+          description: `Achat de ${pack.credits} credits`,
+        },
+      });
+
+      return { ...apres, credited: pack.credits, alreadyProcessed: false };
     });
-    if (dejaVu) {
-      // Rejoue : le paiement a deja ete credite. On repond sans rien refaire,
-      // pour que le prestataire cesse de reessayer.
-      const u = await tx.user.findUniqueOrThrow({
+  } catch (error) {
+    // P2002 : violation d'unicite, donc notification rejouee. On repond sans
+    // rien refaire, pour que le prestataire cesse de reessayer.
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      const u = await prisma.user.findUniqueOrThrow({
         where: { id: input.userId },
         select: { credits: true, creditCap: true },
       });
       return { ...u, credited: 0, alreadyProcessed: true };
     }
-
-    const rows = await tx.$queryRaw<Array<{ credits: number; creditCap: number }>>(
-      Prisma.sql`
-        UPDATE "User"
-        SET "creditCap" = GREATEST("creditCap", CEIL(("credits" + ${pack.credits})::numeric / 100) * 100),
-            "credits"   = "credits" + ${pack.credits}
-        WHERE "id" = ${input.userId}
-        RETURNING "credits", "creditCap"
-      `
-    );
-    if (!rows[0]) throw new HttpError(404, "Compte introuvable");
-
-    await tx.rewardTransaction.create({
-      data: {
-        userId: input.userId,
-        amount: pack.credits,
-        type: "EARNED",
-        // La reference est dans le libelle : c'est elle qui rend l'operation
-        // rejouable sans danger, et elle doit rester lisible dans l'historique.
-        description: `Achat ${pack.credits} credits (${input.provider} ${input.reference})`,
-      },
-    });
-
-    return { ...rows[0], credited: pack.credits, alreadyProcessed: false };
-  });
+    throw error;
+  }
 };
+
+/**
+ * L'historique d'achats d'un compte, et ce qu'il a coute.
+ *
+ * Repond a « qui a achete quoi, quand, et combien il a paye » -- ce qu'un
+ * libelle de transaction ne savait pas dire.
+ */
+export const achatsDuCompte = (userId: string) =>
+  prisma.creditPurchase.findMany({
+    where: { userId },
+    orderBy: { createdAt: "desc" },
+    take: 100,
+    select: {
+      id: true,
+      packId: true,
+      credits: true,
+      amountCents: true,
+      currency: true,
+      provider: true,
+      status: true,
+      capBefore: true,
+      capAfter: true,
+      createdAt: true,
+      refundedAt: true,
+    },
+  });

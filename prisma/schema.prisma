@@ -261,6 +261,7 @@ model User {
   coursesCreated     Course[]            @relation("CourseCreator")
   courseEnrolments   CourseParticipant[] @relation("CourseParticipant")
   eventsCreated      SchoolEvent[]       @relation("EventCreator")
+  creditPurchases          CreditPurchase[] @relation("CreditPurchases")
   organizationApplications Organization[] @relation("OrgApplicant")
   accessCodesCreated       AccessCode[]   @relation("AccessCodeCreator")
   accessCodeUsed           AccessCode[]   @relation("AccessCodeUser")
@@ -649,6 +650,21 @@ model Organization {
   /// whole point of asking for it separately: it is what stops someone
   /// registering a school they have no connection to.
   officialEmail String?
+
+  /// L'identite visuelle de l'etablissement.
+  ///
+  /// Demandee apres la validation, jamais dans le dossier : on demande un
+  /// effort apres une victoire, pas avant une decision qui peut etre negative.
+  ///
+  /// `brandColor` ne repeint pas l'application. Elle teinte l'en-tete
+  /// d'accueil, les formes des etats vides et les marqueurs d'appartenance --
+  /// jamais les boutons d'action, le texte ni les etats d'erreur. Une couleur
+  /// arbitraire ne doit pas pouvoir rendre un ecran illisible, ni faire
+  /// passer une reussite pour une alerte.
+  logoUrl    String?
+  bannerUrl  String?
+  /// Format #RRGGBB. Proposee a partir du logo, ajustable.
+  brandColor String?
 
   // --- Where it is -----------------------------------------------------------
   country    String?
@@ -1125,4 +1141,55 @@ model SchoolEvent {
   updatedAt DateTime @updatedAt
 
   @@index([organizationId, startsAt])
+}
+
+/// Un achat de credits, paye.
+///
+/// Une table a part et non une ligne d'historique : il s'agit d'argent, et
+/// l'argent se compte. Trois choses qu'un libelle de transaction ne pouvait pas
+/// porter :
+///
+/// - `@@unique([provider, reference])` est la vraie garantie qu'un paiement ne
+///   credite qu'une fois. La version precedente cherchait la reference dans une
+///   chaine de caracteres : sans contrainte, deux notifications simultanees de
+///   Stripe -- qui rejoue jusqu'a recevoir un accuse -- creditaient deux fois.
+/// - `amountCents` permet de sortir un chiffre d'affaires. En centimes, parce
+///   que la monnaie ne se represente jamais en nombre a virgule.
+/// - `capBefore` / `capAfter` enregistrent ce que l'achat a reellement fait au
+///   plafond. C'est ce qui rend une reclamation verifiable un an plus tard.
+model CreditPurchase {
+  id     String @id @default(uuid())
+  userId String
+
+  packId      String
+  credits     Int
+  amountCents Int
+  currency    String @default("eur")
+
+  /// stripe, apple ou google. Le metier ne s'en sert pas : un credit achete
+  /// est un credit achete, seul change qui confirme le paiement.
+  provider  String
+  /// L'identifiant du paiement chez le prestataire.
+  reference String
+
+  status     PurchaseStatus @default(PAID)
+  refundedAt DateTime?
+  /// Pourquoi il a ete rembourse. Vide tant qu'il ne l'est pas.
+  refundNote String?
+
+  capBefore Int
+  capAfter  Int
+
+  user User @relation("CreditPurchases", fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([provider, reference])
+  @@index([userId, createdAt])
+  @@index([createdAt])
+}
+
+enum PurchaseStatus {
+  PAID
+  REFUNDED
 }

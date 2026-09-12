@@ -28,7 +28,22 @@ export const getMembershipState = async (userId: string) => {
       userId,
       status: { in: [MembershipStatus.ACTIVE, MembershipStatus.PENDING, MembershipStatus.ALUMNI] },
     },
-    include: { organization: { select: { id: true, name: true, slug: true, status: true } } },
+    include: {
+      organization: {
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          status: true,
+          // L'identite voyage avec l'adhesion : c'est la seule reponse que
+          // chaque client lit deja au demarrage, donc le seul endroit ou la
+          // poser sans ajouter un appel sur le chemin critique.
+          logoUrl: true,
+          bannerUrl: true,
+          brandColor: true,
+        },
+      },
+    },
     // ACTIVE first, so a stale ALUMNI row never masks a current membership.
     orderBy: { createdAt: "desc" },
   });
@@ -53,7 +68,22 @@ export const getMembershipState = async (userId: string) => {
 export const getActiveMembership = async (userId: string) =>
   prisma.membership.findFirst({
     where: { userId, status: MembershipStatus.ACTIVE },
-    include: { organization: { select: { id: true, name: true, slug: true, status: true } } },
+    include: {
+      organization: {
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          status: true,
+          // L'identite voyage avec l'adhesion : c'est la seule reponse que
+          // chaque client lit deja au demarrage, donc le seul endroit ou la
+          // poser sans ajouter un appel sur le chemin critique.
+          logoUrl: true,
+          bannerUrl: true,
+          brandColor: true,
+        },
+      },
+    },
   });
 
 /**

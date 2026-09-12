@@ -167,11 +167,23 @@ describe("Achat de credits", () => {
         amountCents: 2499,
       });
 
+      // La table d'achats porte la comptabilite : qui, quel lot, combien paye,
+      // et ce que l'achat a fait au plafond.
+      const achat = await prisma.creditPurchase.findFirst({
+        where: { provider: "stripe", reference },
+      });
+      expect(achat).not.toBeNull();
+      expect(achat?.userId).toBe(cible.id);
+      expect(achat?.credits).toBe(420);
+      expect(achat?.amountCents).toBe(2499);
+      expect(achat?.status).toBe("PAID");
+      expect(achat?.capAfter).toBeGreaterThanOrEqual(achat!.capBefore);
+
+      // Et l'historique que l'utilisateur lit reste alimente.
       const trace = await prisma.rewardTransaction.findFirst({
-        where: { userId: cible.id, description: { contains: reference } },
+        where: { userId: cible.id, amount: 420, type: "EARNED" },
       });
       expect(trace).not.toBeNull();
-      expect(trace?.amount).toBe(420);
     });
 
     it("refuse un lot qui n'existe pas", async () => {

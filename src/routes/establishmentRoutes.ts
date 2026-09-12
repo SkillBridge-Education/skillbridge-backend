@@ -4,7 +4,10 @@ import { validate } from "../middleware/validate";
 import { contentRateLimiter } from "../middleware/rateLimit";
 import { authRateLimiter } from "../middleware/authRateLimit";
 import { getAuthenticatedUserId } from "../utils/requestHelpers";
+import { z } from "zod";
 import { requireOrgAdmin } from "../services/organizationService";
+import { lireIdentite, mettreAJourIdentite } from "../services/brandingService";
+import { fileUrlSchema } from "../schemas/messageSchemas";
 import {
   applyForEstablishment,
   getMyApplication,
@@ -89,6 +92,49 @@ router.get(
   handle(async (req, res) => {
     const application = await getMyApplication(getAuthenticatedUserId(req));
     res.status(200).json({ application });
+  })
+);
+
+// --- L'identite visuelle de l'etablissement ---------------------------------
+
+/**
+ * Lire et poser le logo, la banniere et la couleur.
+ *
+ * Administrateurs uniquement : ce ne sont pas des preferences personnelles,
+ * c'est ce que tous les membres verront chaque jour.
+ *
+ * Les trois champs sont independants. On demande le logo au premier passage,
+ * la couleur juste apres -- proposee a partir du logo -- et la banniere plus
+ * tard, quand elle sert. Un formulaire exigeant trois televersements d'un coup
+ * se referme sans etre rempli.
+ */
+router.get(
+  "/identity",
+  handle(async (req, res) => {
+    res.status(200).json({ identity: await lireIdentite(getAuthenticatedUserId(req)) });
+  })
+);
+
+router.patch(
+  "/identity",
+  contentRateLimiter,
+  validate({
+    body: z
+      .object({
+        logoUrl: fileUrlSchema.nullable().optional(),
+        bannerUrl: fileUrlSchema.nullable().optional(),
+        brandColor: z
+          .string()
+          .trim()
+          .regex(/^#[0-9a-fA-F]{6}$/, "La couleur doit etre au format #RRGGBB")
+          .nullable()
+          .optional(),
+      })
+      .refine((b) => Object.keys(b).length > 0, "Aucun champ a modifier"),
+  }),
+  handle(async (req, res) => {
+    const identity = await mettreAJourIdentite(getAuthenticatedUserId(req), req.body);
+    res.status(200).json({ identity });
   })
 );
 
