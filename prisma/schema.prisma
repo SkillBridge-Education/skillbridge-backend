@@ -83,6 +83,13 @@ enum OrgRole {
 // so the school experience cannot be self-served by individuals.
 enum OrganizationStatus {
   PENDING
+  /// L'equipe a pose une question et attend la reponse de l'etablissement.
+  ///
+  /// Un statut a part entiere, et non une simple note : sans lui, une demande
+  /// qu'on n'a pas encore regardee et une demande qui attend l'ecole se
+  /// ressemblent dans la file, et la promesse de quatorze jours n'est plus
+  /// surveillable.
+  INFO_REQUESTED
   ACTIVE
   REJECTED
   SUSPENDED

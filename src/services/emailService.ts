@@ -212,3 +212,184 @@ export const sendPasswordResetEmail = async (input: {
   await getTransport().sendMail({ from: FROM, to: input.to, subject, html, text });
   logger.info({ to: input.to }, "Password reset email sent");
 };
+
+
+// --- Etablissements ---------------------------------------------------------
+
+/**
+ * Le courrier n'est jamais le chemin de recuperation.
+ *
+ * L'identifiant d'une ecole reste lisible dans le back-office et dans
+ * l'application de son representant. Ces envois sont une commodite posee
+ * par-dessus : hors production, l'absence de SMTP est journalisee et la
+ * fonction rend la main, pour qu'un serveur mal configure ne puisse jamais
+ * bloquer une decision deja prise.
+ */
+const envoyerOuJournaliser = async (
+  input: { to: string; subject: string; html: string },
+  contexte: Record<string, unknown>
+): Promise<void> => {
+  if (!isConfigured()) {
+    if (env.nodeEnv === "production") {
+      throw new Error("GMAIL_USER and GMAIL_APP_PASSWORD are required in production");
+    }
+    logger.warn({ to: input.to, ...contexte }, "Email non configure, contenu journalise");
+    return;
+  }
+
+  await getTransport().sendMail({
+    from: FROM,
+    to: input.to,
+    subject: input.subject,
+    html: input.html,
+  });
+};
+
+export const sendEstablishmentApprovedEmail = async (input: {
+  to: string;
+  contactName: string;
+  organizationName: string;
+  publicId: string;
+}): Promise<void> => {
+  const nom = escapeHtml(input.contactName);
+  const ecole = escapeHtml(input.organizationName);
+  const id = escapeHtml(input.publicId);
+
+  await envoyerOuJournaliser(
+    {
+      to: input.to,
+      subject: `${input.organizationName} est validé — votre identifiant SkillBridge`,
+      html: emailWrapper(`
+        <h1 style="margin:0 0 8px;font-size:22px;font-weight:900;color:#252840;letter-spacing:-0.5px;">
+          Votre établissement est validé
+        </h1>
+        <p style="margin:0 0 18px;font-size:15px;line-height:23px;color:#756B5B;">
+          Bonjour ${nom}, la demande d'inscription de <strong>${ecole}</strong> a été acceptée.
+        </p>
+        <p style="margin:0 0 10px;font-size:14px;line-height:21px;color:#756B5B;">
+          Voici l'identifiant de votre structure :
+        </p>
+        <div style="margin:0 0 18px;padding:16px;background:#F4F2ED;border-radius:14px;text-align:center;">
+          <span style="font-size:22px;font-weight:900;letter-spacing:2px;color:#252840;">${id}</span>
+        </div>
+        <p style="margin:0 0 18px;font-size:14px;line-height:21px;color:#756B5B;">
+          Il vous sert à ouvrir votre espace : dans l'application, choisissez
+          <strong>Se connecter → Mon établissement</strong>, puis saisissez votre adresse,
+          votre mot de passe et cet identifiant.
+        </p>
+        <p style="margin:0;font-size:13px;line-height:20px;color:#7A6E5C;">
+          Vous le retrouverez toujours dans l'application, sur la page de votre établissement :
+          inutile de conserver ce message.
+        </p>
+      `),
+    },
+    { organizationName: input.organizationName, publicId: input.publicId }
+  );
+};
+
+export const sendEstablishmentRejectedEmail = async (input: {
+  to: string;
+  contactName: string;
+  organizationName: string;
+  reason: string;
+}): Promise<void> => {
+  const nom = escapeHtml(input.contactName);
+  const ecole = escapeHtml(input.organizationName);
+  const motif = escapeHtml(input.reason);
+
+  await envoyerOuJournaliser(
+    {
+      to: input.to,
+      subject: `Votre demande pour ${input.organizationName}`,
+      html: emailWrapper(`
+        <h1 style="margin:0 0 8px;font-size:22px;font-weight:900;color:#252840;letter-spacing:-0.5px;">
+          Votre demande n'a pas été retenue
+        </h1>
+        <p style="margin:0 0 18px;font-size:15px;line-height:23px;color:#756B5B;">
+          Bonjour ${nom}, la demande d'inscription de <strong>${ecole}</strong> n'a pas abouti.
+        </p>
+        <div style="margin:0 0 18px;padding:16px;background:#F4F2ED;border-radius:14px;">
+          <p style="margin:0;font-size:14px;line-height:21px;color:#252840;">${motif}</p>
+        </div>
+        <p style="margin:0;font-size:14px;line-height:21px;color:#756B5B;">
+          Si les éléments manquants peuvent être fournis, vous pouvez déposer une nouvelle
+          demande depuis l'application.
+        </p>
+      `),
+    },
+    { organizationName: input.organizationName }
+  );
+};
+
+export const sendEstablishmentInfoRequestedEmail = async (input: {
+  to: string;
+  contactName: string;
+  organizationName: string;
+  message: string;
+}): Promise<void> => {
+  const nom = escapeHtml(input.contactName);
+  const ecole = escapeHtml(input.organizationName);
+  const question = escapeHtml(input.message);
+
+  await envoyerOuJournaliser(
+    {
+      to: input.to,
+      subject: `Une précision sur votre demande — ${input.organizationName}`,
+      html: emailWrapper(`
+        <h1 style="margin:0 0 8px;font-size:22px;font-weight:900;color:#252840;letter-spacing:-0.5px;">
+          Il nous manque une précision
+        </h1>
+        <p style="margin:0 0 18px;font-size:15px;line-height:23px;color:#756B5B;">
+          Bonjour ${nom}, nous examinons la demande de <strong>${ecole}</strong> et
+          aurions besoin du point suivant :
+        </p>
+        <div style="margin:0 0 18px;padding:16px;background:#F4F2ED;border-radius:14px;">
+          <p style="margin:0;font-size:14px;line-height:21px;color:#252840;">${question}</p>
+        </div>
+        <p style="margin:0;font-size:14px;line-height:21px;color:#756B5B;">
+          Répondez simplement à ce message. Votre demande reste ouverte en attendant.
+        </p>
+      `),
+    },
+    { organizationName: input.organizationName }
+  );
+};
+
+export const sendPublicIdRegeneratedEmail = async (input: {
+  to: string;
+  contactName: string;
+  organizationName: string;
+  publicId: string;
+  reason: string;
+}): Promise<void> => {
+  const nom = escapeHtml(input.contactName);
+  const ecole = escapeHtml(input.organizationName);
+  const id = escapeHtml(input.publicId);
+  const motif = escapeHtml(input.reason);
+
+  await envoyerOuJournaliser(
+    {
+      to: input.to,
+      subject: `Nouvel identifiant pour ${input.organizationName}`,
+      html: emailWrapper(`
+        <h1 style="margin:0 0 8px;font-size:22px;font-weight:900;color:#252840;letter-spacing:-0.5px;">
+          Votre identifiant a été renouvelé
+        </h1>
+        <p style="margin:0 0 18px;font-size:15px;line-height:23px;color:#756B5B;">
+          Bonjour ${nom}, l'identifiant de <strong>${ecole}</strong> a été remplacé.
+          <strong>L'ancien ne fonctionne plus.</strong>
+        </p>
+        <div style="margin:0 0 18px;padding:16px;background:#F4F2ED;border-radius:14px;text-align:center;">
+          <span style="font-size:22px;font-weight:900;letter-spacing:2px;color:#252840;">${id}</span>
+        </div>
+        <div style="margin:0 0 18px;padding:16px;background:#F4F2ED;border-radius:14px;">
+          <p style="margin:0;font-size:14px;line-height:21px;color:#252840;">${motif}</p>
+        </div>
+        <p style="margin:0;font-size:13px;line-height:20px;color:#7A6E5C;">
+          Vous le retrouverez toujours dans l'application, sur la page de votre établissement.
+        </p>
+      `),
+    },
+    { organizationName: input.organizationName, publicId: input.publicId }
+  );
+};

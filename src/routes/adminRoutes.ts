@@ -10,6 +10,11 @@ import { getDashboardStats, getDashboardTraffic } from "../services/dashboardSta
 import { getSettings, updateSettings } from "../services/settingsService";
 import { recordSettingsChange } from "../services/adminService";
 import {
+  demanderDesInformations,
+  detailsPourExamen,
+  regenererPublicId,
+} from "../services/establishmentReviewService";
+import {
   actionReportController,
   adjustCreditsController,
   approveOrganizationController,
@@ -75,6 +80,89 @@ router.get(
 );
 router.post("/organizations/:id/approve", withReason, approveOrganizationController);
 router.post("/organizations/:id/reject", withReason, rejectOrganizationController);
+
+/**
+ * Le dossier complet d'une demande, avec ce qui aide a decider.
+ *
+ * Deux champs sont calcules et non stockes : la concordance entre le domaine de
+ * l'adresse officielle et celui du site declare -- le signal de legitimite le
+ * plus fort qu'on puisse obtenir sans rien demander de plus -- et depuis
+ * combien de jours la demande attend, sans quoi la promesse de quatorze jours
+ * n'est surveillee par personne.
+ */
+router.get(
+  "/organizations/:id",
+  withId,
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      res.status(200).json({ organization: await detailsPourExamen(req.params.id as string) });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+/**
+ * Poser une question sans refuser la demande.
+ *
+ * Sans cette action, un relecteur a qui il manque un detail doit refuser -- et
+ * l'ecole recommence tout le dossier -- ou approuver sans savoir.
+ */
+router.post(
+  "/organizations/:id/request-info",
+  validate({
+    params: idParamSchema,
+    body: z.object({
+      message: z
+        .string()
+        .trim()
+        .min(10, "Expliquez ce qui manque en quelques mots")
+        .max(1000),
+    }),
+  }),
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const result = await demanderDesInformations(
+        getAuthenticatedUserId(req),
+        req.params.id as string,
+        req.body.message as string
+      );
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+/**
+ * Renouvelle l'identifiant d'un etablissement.
+ *
+ * A manier avec precaution : le representant s'en sert pour se connecter, donc
+ * le renouveler coupe son acces jusqu'a ce qu'il connaisse le nouveau. D'ou le
+ * motif obligatoire, et la trace dans le journal d'audit comme pour une
+ * suspension.
+ */
+router.post(
+  "/organizations/:id/regenerate-id",
+  withReason,
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const actorId = getAuthenticatedUserId(req);
+      const reason = req.body.reason as string;
+      const result = await regenererPublicId(actorId, req.params.id as string, reason);
+
+      await recordSettingsChange(actorId, reason, {
+        action: "ORGANIZATION_ID_REGENERATED",
+        organizationId: req.params.id,
+        previousPublicId: result.previousPublicId,
+      });
+
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  }
+);
 
 // --- Appeals ---------------------------------------------------------------
 router.get("/appeals", validate({ query: listAppealsQuerySchema }), listAppealsController);

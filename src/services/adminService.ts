@@ -2,6 +2,7 @@ import { Prisma, UserStatus } from "@prisma/client";
 import { prisma } from "../utils/prisma";
 import { HttpError } from "../utils/httpError";
 import { finaliseEstablishmentApproval } from "./establishmentService";
+import { notifierDecision } from "./establishmentReviewService";
 import { grantCredits, spendCredits } from "./creditService";
 import { disconnectUser } from "../sockets";
 import { toPage, toPrismaPageArgs } from "../utils/pagination";
@@ -356,7 +357,17 @@ const reviewOrganization = (status: "ACTIVE" | "REJECTED") =>
       await finaliseEstablishmentApproval(organizationId);
     }
 
-    return result;
+    /**
+     * Prevenir l'etablissement, sans jamais faire echouer la decision.
+     *
+     * L'envoi vient apres l'enregistrement : annoncer une validation qui
+     * n'aurait pas abouti serait pire que ne rien annoncer. Et un serveur SMTP
+     * indisponible ne doit pas empecher d'approuver une ecole -- l'identifiant
+     * reste lisible dans le back-office et dans l'application du representant.
+     */
+    const courrier = await notifierDecision(organizationId, status, reason);
+
+    return { ...result, ...courrier };
   };
 
 // Manual approval is what keeps school mode out of reach of individual sign-ups.
