@@ -1,5 +1,6 @@
 import { MatchStatus, Prisma, UserStatus } from "@prisma/client";
 import { HttpError } from "../utils/httpError";
+import { assertNotBlocked } from "./blockService";
 import { prisma } from "../utils/prisma";
 import { createNotificationService } from "./notificationsService";
 
@@ -195,6 +196,9 @@ export const requestMatch = async (input: {
 
   await ensureActiveUser(input.requesterId);
   await ensureActiveUser(receiverId);
+  // A blocked account could send connection requests until now: the block row
+  // was written and read by nothing.
+  await assertNotBlocked(input.requesterId, receiverId);
 
   if (skillId) {
     const skill = await prisma.skill.findFirst({

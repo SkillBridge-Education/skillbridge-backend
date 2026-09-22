@@ -3,5 +3,11 @@ node_modules
 .env
 
 /generated/prisma
-     
-     
+
+# Build output must not be versioned
+dist/
+
+coverage/
+
+# Uploaded media is not source
+uploads/

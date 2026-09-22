@@ -1,3 +1,4 @@
+import { logger } from "../utils/logger";
 import { createHash, randomBytes } from "crypto";
 import { Role, UserStatus } from "@prisma/client";
 import { prisma } from "../utils/prisma";
@@ -84,7 +85,7 @@ export const registerUser = async (input: RegisterInput) => {
 
   // Always send the verification email (fire-and-forget so it never blocks registration)
   sendUserVerificationEmail(user).catch((err) => {
-    console.error("Failed to send verification email", err);
+    logger.error({ err }, "Failed to send verification email");
   });
 
   if (!env.requireEmailVerification) {
@@ -106,13 +107,29 @@ export const loginUser = async (input: LoginInput) => {
     where: { email: normalizedEmail },
   });
 
-  if (!user || user.status !== UserStatus.ACTIVE) {
+  if (!user) {
     throw new HttpError(401, "Invalid email or password");
   }
 
   const isPasswordValid = await comparePassword(input.password, user.passwordHash);
 
   if (!isPasswordValid) {
+    throw new HttpError(401, "Invalid email or password");
+  }
+
+  // Only once the password is proven: telling an unauthenticated stranger that
+  // an account is suspended would leak both its existence and its state.
+  // Telling the account holder the truth is required — the DSA obliges us to
+  // state the reason and offer a route of appeal, and "wrong password" sent
+  // someone to reset a password that was never the problem.
+  if (user.status === UserStatus.SUSPENDED) {
+    throw new HttpError(403, "Your account is suspended.", {
+      reason: user.suspensionReason,
+      appealPath: "/appeals",
+    });
+  }
+
+  if (user.status !== UserStatus.ACTIVE) {
     throw new HttpError(401, "Invalid email or password");
   }
 
@@ -189,7 +206,7 @@ export const requestPasswordReset = async (email: string): Promise<void> => {
   try {
     await sendPasswordResetEmail({ to: user.email, resetUrl: resetUrl.toString() });
   } catch (error) {
-    console.error("Failed to send password reset email", error);
+    logger.error({ err: error }, "Failed to send password reset email");
   }
 };
 

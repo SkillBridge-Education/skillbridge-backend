@@ -6,9 +6,127 @@ datasource db {
   provider = "postgresql"
 }
 
+// Platform-wide authority. Deliberately kept free of school-specific values:
+// a teacher has power inside their own school only, never across the platform.
+// School authority lives on Membership.orgRole instead.
 enum Role {
   USER
   ADMIN
+}
+
+// Authority held inside one organization, scoped by Membership.organizationId.
+/// What kind of institution this is. Chosen from a list rather than typed free
+/// text because the reviewer, the directory filter and the member-facing badge
+/// all read it — three places that must agree on the wording.
+enum OrganizationCategory {
+  TECH
+  BUSINESS_SCHOOL
+  COMMERCE
+  ENGINEERING
+  UNIVERSITY
+  IUT
+  BTS
+  CFA
+  LYCEE
+  COLLEGE
+  DESIGN
+  ART
+  COMMUNICATION
+  ONLINE
+  TRAINING_CENTER
+  OTHER
+}
+
+/// How the institution is owned. Separate from category: a lycee can be public
+/// or private, and a reviewer needs both to judge an application.
+enum OrganizationType {
+  PUBLIC
+  PRIVATE
+  NONPROFIT
+  OTHER
+}
+
+/// Where teaching happens. Drives what a campus means for this school.
+enum TeachingMode {
+  ON_SITE
+  REMOTE
+  HYBRID
+}
+
+/// Which seat an access code opens. A code carries its role so redeeming it
+/// cannot be used to claim a different one.
+enum AccessCodeRole {
+  TEACHER
+  STUDENT
+}
+
+enum AccessCodeStatus {
+  /// Minted by the school, not yet used.
+  ISSUED
+  /// Redeemed at sign-up. Stays valid: the code is also the sign-in identifier,
+  /// so it is marked rather than consumed.
+  ACTIVATED
+  /// Withdrawn by the school. Blocks both redemption and sign-in.
+  REVOKED
+}
+
+enum OrgRole {
+  STUDENT
+  TEACHER
+  ORG_ADMIN
+  /// The account that registered the school. Keeps the powers that must
+  /// never be delegated away — appointing admins, and transferring itself.
+  ORG_SUPER_ADMIN
+}
+
+// Schools are vetted by a platform admin before their members get school mode,
+// so the school experience cannot be self-served by individuals.
+enum OrganizationStatus {
+  PENDING
+  ACTIVE
+  REJECTED
+  SUSPENDED
+}
+
+enum MembershipStatus {
+  // A user who picked their school at sign-up but has not been let in yet.
+  // School powers are granted only from ACTIVE, so PENDING confers nothing.
+  PENDING
+  ACTIVE
+  // Left normally: keeps a place in the school network and stays reachable.
+  // This is the point of school mode -- a network that outlives the schooling.
+  ALUMNI
+  // Excluded. Loses access, and is not an alumnus: leaving and being removed
+  // must not produce the same state.
+  REVOKED
+}
+
+enum ReportReason {
+  HARASSMENT
+  INAPPROPRIATE_CONTENT
+  SPAM
+  CHILD_SAFETY
+  IMPERSONATION
+  OTHER
+}
+
+enum ReportStatus {
+  PENDING
+  REVIEWING
+  ACTIONED
+  DISMISSED
+}
+
+// The DSA requires suspended users to have an internal route of appeal.
+enum AppealStatus {
+  PENDING
+  GRANTED
+  DENIED
+}
+
+enum LegalDocumentType {
+  TERMS
+  PRIVACY_POLICY
 }
 
 enum UserStatus {
@@ -93,12 +211,53 @@ model User {
   adminSupportCreated RewardTransaction[] @relation("AdminRewardTransactions")
   emailVerificationTokens EmailVerificationToken[]
 
+  // Needed to enforce the 15+ age policy and to prove it was checked.
+  dateOfBirth DateTime?
+
+  // Set when status becomes SUSPENDED. The DSA requires the user to be told why.
+  suspendedAt     DateTime?
+  suspensionReason String?
+
+  memberships Membership[]
+
+  reportsMade     Report[] @relation("ReportReporter")
+  reportsReceived Report[] @relation("ReportReported")
+  reportsReviewed Report[] @relation("ReportReviewer")
+
+  blocksMade     UserBlock[] @relation("BlockBlocker")
+  blocksReceived UserBlock[] @relation("BlockBlocked")
+
+  appeals         Appeal[] @relation("AppealUser")
+  appealsReviewed Appeal[] @relation("AppealReviewer")
+
+  adminActions          AdminAuditLog[] @relation("AuditActor")
+  organizationsReviewed Organization[]  @relation("OrgReviewer")
+  legalAcceptances      LegalAcceptance[]
+  invitesCreated        TeacherInvite[]  @relation("InviteCreator")
+  invitesUsed           TeacherInvite[]  @relation("InviteUser")
+  favorites             Favorite[]       @relation("FavoriteOwner")
+  favoritedBy           Favorite[]       @relation("FavoritedUser")
+  messageHides          MessageHide[]
+  supportTickets        SupportTicket[]  @relation("TicketSender")
+  ticketsAnswered       SupportTicket[]  @relation("TicketAnswerer")
+  supportReplies        SupportReply[]   @relation("ReplyAuthor")
+  settingsUpdated       PlatformSetting[] @relation("SettingEditor")
+  coursesTaught      Course[]            @relation("CourseTeacher")
+  coursesCreated     Course[]            @relation("CourseCreator")
+  courseEnrolments   CourseParticipant[] @relation("CourseParticipant")
+  eventsCreated      SchoolEvent[]       @relation("EventCreator")
+  organizationApplications Organization[] @relation("OrgApplicant")
+  accessCodesCreated       AccessCode[]   @relation("AccessCodeCreator")
+  accessCodeUsed           AccessCode[]   @relation("AccessCodeUser")
+
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([role])
   @@index([status])
   @@index([createdAt])
+  @@index([isEmailVerified])
 }
 
 model EmailVerificationToken {
@@ -241,8 +400,29 @@ model Message {
   type           MessageType @default(TEXT)
   fileUrl        String?
 
+  fileName       String?
+
+  // Quoting another message. SetNull rather than Cascade: deleting the quoted
+  // message must not delete the reply along with it.
+  replyToId String?
+  replyTo   Message?  @relation("MessageReply", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies   Message[] @relation("MessageReply")
+
+  // Edited in place; the timestamp is what lets the client show "modifié".
+  editedAt DateTime?
+
+  /// "Delete for everyone": the row stays so replies and ordering survive, but
+  /// the body is cleared. Keeping a tombstone is also what stops a deletion
+  /// from silently rewriting a conversation someone may have acted on.
+  deletedForEveryone Boolean   @default(false)
+  deletedAt          DateTime?
+
+  pinnedAt   DateTime?
+  pinnedById String?
+
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   sender       User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  hiddenFor    MessageHide[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -250,6 +430,24 @@ model Message {
   @@index([conversationId, createdAt])
   @@index([senderId])
   @@index([status])
+  @@index([conversationId, pinnedAt])
+}
+
+/// "Delete for me": one row per user who hid a message. A per-user table rather
+/// than a flag, because the same message is hidden for one participant and
+/// still visible to the other.
+model MessageHide {
+  id        String @id @default(uuid())
+  messageId String
+  userId    String
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([messageId, userId])
+  @@index([userId])
 }
 
 enum MessageType {
@@ -367,6 +565,10 @@ model Notification {
   read Boolean @default(false)
 
   createdAt DateTime @default(now())
+
+  // Notifications are always read per-user; this index already existed in the
+  // database and is declared here so migrations stop trying to drop it.
+  @@index([userId])
 }
 
 enum NotificationType {
@@ -377,4 +579,535 @@ enum NotificationType {
   CONNECTION_REQUEST
   CONNECTION_ACCEPTED
   MESSAGE_RECEIVED
+}
+// ---------------------------------------------------------------------------
+// School mode (multi-tenant)
+// ---------------------------------------------------------------------------
+
+// A school. Created in PENDING and reviewed by hand by a platform admin, which
+// is what keeps school mode out of reach of individual sign-ups.
+model Organization {
+  id           String             @id @default(uuid())
+  name         String
+  slug         String             @unique
+  status       OrganizationStatus @default(PENDING)
+
+  // Filled in by whoever requests the school account; used to vet the request.
+  contactName  String
+  contactEmail String
+  // Optional institutional email domain, kept for a future automatic check.
+  emailDomain  String?
+
+  reviewedById String?
+  reviewedBy   User?     @relation("OrgReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt   DateTime?
+  reviewNote   String?
+
+  // Six digits, shown to staff so members can be told how to join. Its last two
+  // digits are the school key, repeated in every teacher invite it issues: a
+  // wrong-school code is then caught before any lookup. That key is a usability
+  // check, not a security boundary — the secret is the full code.
+  joinCode String? @unique
+
+  // Details captured when a school applies, so a reviewer can tell a real
+  // institution from someone claiming to be one.
+  registrationNumber String?
+
+  // Study levels this school actually awards, stored as a JSON array of labels.
+  // Configurable because a lycee, a BTS and a university do not deliver the same
+  // diplomas -- a fixed list would be wrong for most of them.
+  studyLevels String?
+  foundedOn          DateTime?
+  address            String?
+  specialties        String?
+
+
+  // --- Identity, as the school describes itself ------------------------------
+  shortName        String?
+  shortDescription String?
+  description      String?
+  website          String?
+  phone            String?
+
+  /// The institution's own address, distinct from the representative's personal
+  /// one. This is what gets contacted to verify the application, which is the
+  /// whole point of asking for it separately: it is what stops someone
+  /// registering a school they have no connection to.
+  officialEmail String?
+
+  // --- Where it is -----------------------------------------------------------
+  country    String?
+  city       String?
+  postalCode String?
+
+  // --- What it is ------------------------------------------------------------
+  category     OrganizationCategory?
+  type         OrganizationType?
+  teachingMode TeachingMode?
+  /// Languages of instruction, as a JSON array of labels.
+  languages    String?
+
+  /// The identifier handed to the school once approved, e.g. SB-HETIC-8X42K.
+  /// Null until then — issuing it is what approval *means*, so it cannot exist
+  /// on a pending row.
+  publicId String? @unique
+
+  /// The person who applied, and their job there. Recorded because approval
+  /// turns exactly this account into the school's super admin, and because a
+  /// reviewer judges the applicant as much as the institution.
+  requestedById          String?
+  requestedBy            User?   @relation("OrgApplicant", fields: [requestedById], references: [id], onDelete: SetNull)
+  representativeFunction String?
+
+  campuses    Campus[]
+  accessCodes AccessCode[]
+  courses     Course[]
+  events      SchoolEvent[]
+
+  memberships    Membership[]
+  teacherInvites TeacherInvite[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+// Links a user to a school and carries their authority *inside that school*.
+// A user with no active membership is an individual account (normal mode).
+model Membership {
+  id             String           @id @default(uuid())
+  userId         String
+  organizationId String
+  orgRole        OrgRole          @default(STUDENT)
+  status         MembershipStatus @default(ACTIVE)
+
+  // Identifier supplied by the school IdP (OneLogin `sub`), when provisioned by SSO.
+  externalId String?
+
+  // Chosen at join time from the list the school configured. Free text rather
+  // than an enum, for the same reason the list is configurable.
+  studyLevel String?
+
+  // Set when the membership becomes ALUMNI or REVOKED, so a school can tell
+  // when someone left from when they were removed.
+  leftAt DateTime?
+
+
+  /// Which site this member belongs to, for a multi-campus school.
+  campusId String?
+  campus   Campus? @relation(fields: [campusId], references: [id], onDelete: SetNull)
+
+  /// What an appointed administrator may actually do, as a JSON array of keys.
+  /// Null means "no delegated powers" rather than "all of them": an admin who
+  /// was never granted anything must not inherit everything by omission.
+  permissions String?
+
+  // Delegation: the school creator can let other staff mint teacher invites,
+  // without handing over the rest of the ORG_ADMIN powers.
+  canInviteTeachers Boolean @default(false)
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, organizationId])
+  @@unique([organizationId, externalId])
+  @@index([organizationId, orgRole])
+  @@index([userId, status])
+}
+
+// ---------------------------------------------------------------------------
+// Moderation, appeals and accountability
+// ---------------------------------------------------------------------------
+
+// Reports are counted by *distinct reporter* before any automatic restriction,
+// so a single account cannot stack reports to silence someone on its own.
+model Report {
+  id             String       @id @default(uuid())
+  reporterId     String
+  reportedUserId String
+  reason         ReportReason
+  description    String?
+  status         ReportStatus @default(PENDING)
+
+  // Optional pointer to the offending message, when the report targets content.
+  messageId String?
+
+  reviewedById String?
+  reviewedAt   DateTime?
+  resolution   String?
+
+  reporter     User  @relation("ReportReporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  reportedUser User  @relation("ReportReported", fields: [reportedUserId], references: [id], onDelete: Cascade)
+  reviewedBy   User? @relation("ReportReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([reportedUserId, status])
+  @@index([status, createdAt])
+  @@index([reporterId, createdAt])
+}
+
+// A user hiding another user from their own experience. Unrelated to moderation:
+// this is a personal preference, not a sanction.
+model UserBlock {
+  id        String @id @default(uuid())
+  blockerId String
+  blockedId String
+
+  blocker User @relation("BlockBlocker", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked User @relation("BlockBlocked", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([blockerId, blockedId])
+  @@index([blockerId])
+}
+
+// The internal route of appeal a suspended user is entitled to under the DSA.
+// This is the only thing a suspended account may still do.
+model Appeal {
+  id      String       @id @default(uuid())
+  userId  String
+  message String
+  status  AppealStatus @default(PENDING)
+
+  reviewedById  String?
+  reviewedAt    DateTime?
+  adminResponse String?
+
+  user       User  @relation("AppealUser", fields: [userId], references: [id], onDelete: Cascade)
+  reviewedBy User? @relation("AppealReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, createdAt])
+  @@index([userId])
+}
+
+// Every privileged action, with a mandatory reason. Required for GDPR
+// accountability and the only trace protecting against internal misuse
+// (the admin dashboard can hand out credits).
+model AdminAuditLog {
+  id         String  @id @default(uuid())
+  actorId    String
+  action     String
+  targetType String
+  targetId   String
+  reason     String
+  metadata   Json?
+  ipAddress  String?
+
+  actor User @relation("AuditActor", fields: [actorId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([actorId, createdAt])
+  @@index([targetType, targetId])
+  @@index([action, createdAt])
+}
+
+// Proof of which version of the terms/privacy policy a user accepted, and when.
+model LegalAcceptance {
+  id      String            @id @default(uuid())
+  userId  String
+  document LegalDocumentType
+  version String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  acceptedAt DateTime @default(now())
+
+  @@unique([userId, document, version])
+  @@index([userId])
+}
+
+/// Codes d'invitation professeur. Un code est nominatif, à usage unique, et
+/// rattaché à un établissement.
+model TeacherInvite {
+  id             String    @id @default(uuid())
+  code           String    @unique
+  organizationId String
+  createdById    String
+  usedById       String?
+  usedAt         DateTime?
+  expiresAt      DateTime
+  revokedAt      DateTime?
+  note           String?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy    User         @relation("InviteCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  usedBy       User?        @relation("InviteUser", fields: [usedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, usedAt])
+  @@index([expiresAt])
+}
+
+/// Bookmarking someone to come back to later, without contacting them.
+/// Deliberately one-sided and silent: the other person is never told, which is
+/// what makes it usable as a shortlist rather than a soft connection request.
+model Favorite {
+  id          String @id @default(uuid())
+  userId      String
+  favoritedId String
+
+  user      User @relation("FavoriteOwner", fields: [userId], references: [id], onDelete: Cascade)
+  favorited User @relation("FavoritedUser", fields: [favoritedId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, favoritedId])
+  @@index([userId, createdAt])
+}
+
+enum SupportTicketStatus {
+  OPEN
+  ANSWERED
+  CLOSED
+}
+
+enum SupportTicketCategory {
+  UNBLOCK_REQUEST
+  CREDITS
+  BUG
+  OTHER
+}
+
+/// A message to support.
+///
+/// Deliberately accepts an unauthenticated sender: the people most likely to
+/// need support are the ones who cannot get in — a suspended account, a
+/// forgotten password, a sign-up that failed. Requiring a session would shut
+/// out exactly the cases the channel exists for. `userId` is filled when the
+/// sender happens to be signed in, and the email is always kept so a reply can
+/// reach them either way.
+model SupportTicket {
+  id          String                @id @default(uuid())
+  status      SupportTicketStatus   @default(OPEN)
+  category    SupportTicketCategory @default(OTHER)
+  subject     String
+  body        String
+  senderEmail String
+  senderName  String
+
+  userId String?
+  user   User?   @relation("TicketSender", fields: [userId], references: [id], onDelete: SetNull)
+
+  answeredAt   DateTime?
+  answeredById String?
+  answeredBy   User?     @relation("TicketAnswerer", fields: [answeredById], references: [id], onDelete: SetNull)
+
+  replies SupportReply[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, createdAt])
+  @@index([senderEmail])
+  @@index([userId])
+}
+
+model SupportReply {
+  id       String @id @default(uuid())
+  ticketId String
+  authorId String
+  body     String
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  author User          @relation("ReplyAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([ticketId, createdAt])
+}
+
+/// Platform settings, one row per key.
+///
+/// Key/value rather than a single wide row: a new setting is then an insert
+/// instead of a migration, and each value carries who last changed it — these
+/// are levers with real consequences (lowering a session's cost is handing out
+/// value), so the audit trail matters as much as the value itself.
+model PlatformSetting {
+  key   String @id
+  value String
+
+  updatedById String?
+  updatedBy   User?   @relation("SettingEditor", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  updatedAt DateTime @updatedAt
+}
+
+/// A site belonging to one school.
+///
+/// Campuses exist so a school with sites in three cities stays *one* SkillBridge
+/// structure instead of three unrelated ones — members, codes and administration
+/// are shared, while a member can still be attached to where they actually study.
+model Campus {
+  id             String  @id @default(uuid())
+  organizationId String
+  name           String
+  city           String?
+  country        String?
+  address        String?
+  postalCode     String?
+  /// A campus with no physical address. Distinct from a school that merely
+  /// teaches remotely: an online campus is a place members belong to.
+  isOnline       Boolean @default(false)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  memberships  Membership[]
+  accessCodes  AccessCode[]
+  courses      Course[]
+  events       SchoolEvent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+}
+
+/// A single-use-to-redeem, reusable-to-sign-in identifier issued by a school.
+///
+/// Bound to one email address on purpose: the code alone proves nothing, because
+/// it travels by email and can be forwarded. What proves authorisation is the
+/// pair — this code *and* this address — so redeeming it with any other address
+/// is refused.
+///
+/// It is marked ACTIVATED rather than deleted at sign-up, because the same code
+/// is what the member types to sign in to their school afterwards.
+model AccessCode {
+  id             String           @id @default(uuid())
+  code           String           @unique
+  organizationId String
+  campusId       String?
+  role           AccessCodeRole
+  status         AccessCodeStatus @default(ISSUED)
+
+  /// Lower-cased at write time; the uniqueness constraint below depends on it.
+  email     String
+  firstName String?
+  lastName  String?
+  note      String?
+
+  createdById   String
+  activatedById String?
+  activatedAt   DateTime?
+  revokedAt     DateTime?
+  revokedById   String?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  campus       Campus?      @relation(fields: [campusId], references: [id], onDelete: SetNull)
+  createdBy    User         @relation("AccessCodeCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  activatedBy  User?        @relation("AccessCodeUser", fields: [activatedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// One live seat per person per role in a school. Re-issuing means revoking
+  /// the old code first, which is what keeps a revoked code from being bypassed
+  /// by simply asking for another.
+  @@unique([organizationId, email, role])
+  @@index([organizationId, status])
+  @@index([email])
+}
+
+/// Un cours donne par un professeur aux membres de son etablissement.
+///
+/// Distinct d'une TeachingSession : une session est un echange entre deux
+/// personnes qui se sont trouvees, un cours est programme par l'ecole pour un
+/// groupe. Les deux coexistent dans l'interface etablissement, sous deux
+/// onglets, parce qu'ils ne se decident pas de la meme facon.
+///
+/// Aucun credit n'intervient : en mode etablissement l'enseignement est un
+/// service de l'ecole, pas un echange marchand.
+model Course {
+  id             String  @id @default(uuid())
+  organizationId String
+  campusId       String?
+
+  title       String
+  description String?
+  /// Niveau ou promotion concernee, en texte libre pour la meme raison que
+  /// `Membership.studyLevel` : un lycee, un BTS et une universite ne decoupent
+  /// pas leurs annees pareil.
+  studyLevel  String?
+
+  teacherId String
+  startsAt  DateTime
+  endsAt    DateTime?
+  /// Salle, ou lien de visio quand le cours est a distance.
+  location  String?
+  isOnline  Boolean   @default(false)
+  /// Nul = pas de limite. Zero serait ambigu avec "complet".
+  capacity  Int?
+
+  cancelledAt DateTime?
+  createdById String
+
+  organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  campus       Campus?             @relation(fields: [campusId], references: [id], onDelete: SetNull)
+  teacher      User                @relation("CourseTeacher", fields: [teacherId], references: [id], onDelete: Cascade)
+  createdBy    User                @relation("CourseCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  participants CourseParticipant[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, startsAt])
+  @@index([teacherId, startsAt])
+}
+
+/// Inscription d'un membre a un cours.
+model CourseParticipant {
+  id       String   @id @default(uuid())
+  courseId String
+  userId   String
+  joinedAt DateTime @default(now())
+
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  user   User   @relation("CourseParticipant", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([courseId, userId])
+  @@index([userId])
+}
+
+/// Un evenement annonce par l'etablissement a ses membres.
+///
+/// Porte une banniere parce que c'est ainsi qu'une ecole communique : une
+/// journee portes ouvertes ou une remise de diplomes se reconnait a son image
+/// avant son titre.
+model SchoolEvent {
+  id             String  @id @default(uuid())
+  organizationId String
+  campusId       String?
+
+  title       String
+  description String?
+  startsAt    DateTime
+  endsAt      DateTime?
+  location    String?
+  bannerUrl   String?
+  /// Mis en avant en tete de l'onglet Evenements.
+  isPinned    Boolean @default(false)
+
+  cancelledAt DateTime?
+  createdById String
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  campus       Campus?      @relation(fields: [campusId], references: [id], onDelete: SetNull)
+  createdBy    User         @relation("EventCreator", fields: [createdById], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, startsAt])
 }

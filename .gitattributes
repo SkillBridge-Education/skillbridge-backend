@@ -1,0 +1,17 @@
+# Secrets chiffres au repos par git-crypt. Sans cette regle, un .env commite
+# par erreur part en clair.
+.env filter=git-crypt diff=git-crypt
+.env.* filter=git-crypt diff=git-crypt
+*.pem filter=git-crypt diff=git-crypt
+*.key filter=git-crypt diff=git-crypt
+
+# Ces deux-la ne contiennent aucun secret et doivent rester lisibles : la
+# configuration documentee, et celle des tests -- que la CI doit pouvoir lire
+# sans la cle GPG, sinon toute la suite echoue sur du binaire.
+# Un motif negatif (!.env.example) est ignore par git-attributes : il faut
+# desactiver explicitement le filtre sur chaque chemin, apres la regle .env.*
+.env.example !filter !diff
+.env.test !filter !diff
+
+# Fins de ligne normalisees : developpe sous Windows, compile sous Linux en CI.
+* text=auto eol=lf

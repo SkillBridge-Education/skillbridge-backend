@@ -1,9 +1,13 @@
+import { logger } from "../utils/logger";
 import nodemailer from "nodemailer";
 import { env } from "../utils/env";
 
 const FROM = `"SkillBridge" <${env.gmailUser || "no-reply@skillbridge.app"}>`;
 
-const isConfigured = () => Boolean(env.gmailUser && env.gmailAppPassword);
+// Tests must never reach a real SMTP server: it makes the suite slow, flaky and
+// dependent on live credentials, and it would mail real addresses.
+const isConfigured = () =>
+  process.env.NODE_ENV !== "test" && Boolean(env.gmailUser && env.gmailAppPassword);
 
 const getTransport = () =>
   nodemailer.createTransport({
@@ -111,12 +115,16 @@ export const sendVerificationEmail = async (input: {
   const safeFirst = escapeHtml(input.firstName);
   const safeUrl   = escapeHtml(input.verificationUrl);
 
-  console.log(`[email] Verification link for ${input.to}: ${input.verificationUrl}`);
-
   if (!isConfigured()) {
     if (env.nodeEnv === "production") {
       throw new Error("GMAIL_USER and GMAIL_APP_PASSWORD are required in production");
     }
+    // Outside production the link is logged so local sign-up still works
+    // without SMTP credentials.
+    logger.warn(
+      { to: input.to, verificationUrl: input.verificationUrl },
+      "Email not configured, verification link logged instead of sent"
+    );
     return;
   }
 
@@ -151,6 +159,7 @@ export const sendVerificationEmail = async (input: {
   ].join("\n");
 
   await getTransport().sendMail({ from: FROM, to: input.to, subject, html, text });
+  logger.info({ to: input.to }, "Verification email sent");
 };
 
 export const sendPasswordResetEmail = async (input: {
@@ -159,12 +168,14 @@ export const sendPasswordResetEmail = async (input: {
 }): Promise<void> => {
   const safeUrl = escapeHtml(input.resetUrl);
 
-  console.log(`[email] Password reset link for ${input.to}: ${input.resetUrl}`);
-
   if (!isConfigured()) {
     if (env.nodeEnv === "production") {
       throw new Error("GMAIL_USER and GMAIL_APP_PASSWORD are required in production");
     }
+    logger.warn(
+      { to: input.to, resetUrl: input.resetUrl },
+      "Email not configured, reset link logged instead of sent"
+    );
     return;
   }
 
@@ -199,4 +210,5 @@ export const sendPasswordResetEmail = async (input: {
   ].join("\n");
 
   await getTransport().sendMail({ from: FROM, to: input.to, subject, html, text });
+  logger.info({ to: input.to }, "Password reset email sent");
 };

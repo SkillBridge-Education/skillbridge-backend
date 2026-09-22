@@ -8,6 +8,11 @@ import {
   resetPasswordService,
   verifyUserEmail
 } from "../services/authService";
+import {
+  redeemAccessCode,
+  resolveAccessCode,
+  resolveEstablishmentSignIn,
+} from "../services/establishmentService";
 
 const isNonEmptyString = (value: unknown): value is string =>
   typeof value === "string" && value.trim().length > 0;
@@ -60,7 +65,7 @@ export const register = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const { email, password, firstName, lastName, bio } = req.body;
+    const { email, password, firstName, lastName, bio, accessCode } = req.body;
     const errors: ValidationError[] = [];
 
     if (!isNonEmptyString(email)) {
@@ -84,7 +89,34 @@ export const register = async (
       return;
     }
 
+    /**
+     * A school access code is checked *before* the account is created.
+     *
+     * The other order looks simpler and is worse: it leaves somebody who
+     * mistyped their code holding a personal account they did not ask for,
+     * on a platform where the two kinds of account behave differently.
+     */
+    if (accessCode !== undefined) {
+      if (!isNonEmptyString(accessCode)) {
+        sendValidationErrors(res, [
+          { field: "accessCode", message: "Identifiant invalide" },
+        ]);
+        return;
+      }
+      await resolveAccessCode(accessCode, email);
+    }
+
     const result = await registerUser({ email, password, firstName, lastName, bio });
+
+    if (accessCode !== undefined) {
+      const { membership, organization } = await redeemAccessCode(
+        result.user.id,
+        accessCode as string,
+        email
+      );
+      res.status(201).json({ ...result, membership, organization });
+      return;
+    }
 
     res.status(201).json(result);
   } catch (error) {
@@ -98,7 +130,7 @@ export const login = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const { email, password } = req.body;
+    const { email, password, establishmentId } = req.body;
     const errors: ValidationError[] = [];
 
     if (!isNonEmptyString(email)) {
@@ -115,6 +147,18 @@ export const login = async (
     }
 
     const result = await loginUser({ email, password });
+
+    /**
+     * School mode: the identifier picks which structure to sign in to, it does
+     * not grant anything. Checked after the password on purpose — answering
+     * "unknown identifier" to someone who has not proved who they are would
+     * turn sign-in into a way to test which codes exist.
+     */
+    if (isNonEmptyString(establishmentId)) {
+      const context = await resolveEstablishmentSignIn(result.user.id, establishmentId);
+      res.status(200).json({ ...result, ...context });
+      return;
+    }
 
     res.status(200).json(result);
   } catch (error) {

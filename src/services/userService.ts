@@ -1,7 +1,9 @@
 import { Prisma, UserStatus } from "@prisma/client";
 import { HttpError } from "../utils/httpError";
+import { areBlocked, excludeBlockedFilter } from "./blockService";
 import { prisma } from "../utils/prisma";
 import { LearningGoalInput, SkillInput, UpdateProfileInput } from "../utils/profileValidation";
+import { toPage, toPrismaPageArgs } from "../utils/pagination";
 
 const skillSelect = { id: true, name: true, description: true, category: true } satisfies Prisma.SkillSelect;
 
@@ -43,9 +45,32 @@ export const getCurrentUserProfile = async (userId: string) => {
   return user;
 };
 
-export const getPublicUserProfile = async (userId: string) => {
+/**
+ * A member profile, as seen by another member.
+ *
+ * `viewerId` is what makes a block mean something here: without it the person
+ * you blocked keeps full sight of your profile, which is not what anyone
+ * pressing "Bloquer" believes they are getting.
+ *
+ * A suspended or deleted account is hidden too — it used not to be, so a
+ * profile stayed reachable by direct link after moderation removed it.
+ */
+export const getPublicUserProfile = async (userId: string, viewerId?: string) => {
   const user = await prisma.user.findUnique({ where: { id: userId }, select: publicUserSelect });
   if (!user) throw new HttpError(404, "User not found");
+
+  const visible = await prisma.user.findFirst({
+    where: { id: userId, status: UserStatus.ACTIVE },
+    select: { id: true },
+  });
+  if (!visible) throw new HttpError(404, "User not found");
+
+  // Same answer as "no such account": whether a block exists is not something
+  // the blocked person gets to confirm.
+  if (viewerId && (await areBlocked(viewerId, userId))) {
+    throw new HttpError(404, "User not found");
+  }
+
   return user;
 };
 
@@ -58,6 +83,23 @@ export const updateUserProfile = async (userId: string, input: UpdateProfileInpu
   if (input.avatarUrl    !== undefined) data.avatarUrl    = input.avatarUrl;
   if (input.bannerUrl    !== undefined) data.bannerUrl    = input.bannerUrl;
   if (input.availability !== undefined) data.availability = input.availability;
+
+  // Write-once. A freely editable date of birth makes the age gate decorative:
+  // sign up as 16, then set whatever you like. Correcting a genuine mistake is
+  // rare enough to go through support rather than reopen that hole.
+  if (input.dateOfBirth !== undefined) {
+    const existing = await prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: { dateOfBirth: true },
+    });
+
+    if (existing.dateOfBirth) {
+      throw new HttpError(409, "Your date of birth has already been recorded");
+    }
+
+    data.dateOfBirth = input.dateOfBirth;
+  }
+
   const user = await prisma.user.update({ where: { id: userId }, data, select: currentUserSelect });
   return user;
 };
@@ -106,8 +148,18 @@ export const removeLearningGoal = async (userId: string, goalId: string) => {
   await prisma.learningGoal.delete({ where: { id: goalId } });
 };
 
-export const searchUsers = async (params: { query?: string; skill?: string; limit?: number }) => {
-  const where: Prisma.UserWhereInput = { status: UserStatus.ACTIVE };
+export const searchUsers = async (params: {
+  query?: string;
+  skill?: string;
+  limit: number;
+  cursor?: string;
+  viewerId?: string;
+}) => {
+  const where: Prisma.UserWhereInput = {
+    status: UserStatus.ACTIVE,
+    // People either side of a block disappear from each other's results.
+    ...(await excludeBlockedFilter(params.viewerId)),
+  };
   if (params.query) {
     where.OR = [
       { firstName: { contains: params.query, mode: "insensitive" } },
@@ -117,5 +169,15 @@ export const searchUsers = async (params: { query?: string; skill?: string; limi
   if (params.skill) {
     where.teachingSkills = { some: { skill: { name: { contains: params.skill, mode: "insensitive" } } } };
   }
-  return prisma.user.findMany({ where, select: publicUserSelect, take: params.limit ?? 50, orderBy: { createdAt: "desc" } });
+
+  const rows = await prisma.user.findMany({
+    where,
+    select: publicUserSelect,
+    // Ordering by createdAt alone is not stable when two users share a
+    // timestamp, which would make a cursor skip or repeat rows.
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    ...toPrismaPageArgs({ limit: params.limit, cursor: params.cursor }),
+  });
+
+  return toPage(rows, params.limit);
 };

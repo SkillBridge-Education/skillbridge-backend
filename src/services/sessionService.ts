@@ -1,8 +1,16 @@
 import { v4 as uuid } from "uuid";
 import { prisma } from "../utils/prisma";
 import { HttpError } from "../utils/httpError";
+import { assertNotBlocked } from "./blockService";
 import { createNotificationService } from "./notificationsService";
-import { spendCredits } from "./creditService";
+import { grantCredits, spendCredits } from "./creditService";
+import { grantLoyaltyRewardIfDue, isSchoolSession } from "./rewardService";
+import { emitToUser } from "../sockets";
+
+const emitSessionUpdate = (session: { id: string; teacherId: string; learnerId: string; status: string }): void => {
+  emitToUser(session.teacherId, "session:update", session);
+  emitToUser(session.learnerId, "session:update", session);
+};
 
 export const createSessionService = async (
   teacherId: string,
@@ -11,11 +19,26 @@ export const createSessionService = async (
   estimatedDuration: number,
   scheduledAt: Date
 ) => {
+  /**
+   * Teaching yourself is not a session.
+   *
+   * Nothing refused it before, and the loop it allowed was profitable: create,
+   * accept, join and end a session with yourself on both sides. The balance
+   * nets out, but each pass adds a COMPLETED session, and the loyalty reward
+   * counts completed sessions without filtering — fifty passes minted 200
+   * credits, deliberately over the cap.
+   */
+  if (teacherId === learnerId) {
+    throw new HttpError(400, "Vous ne pouvez pas creer une session avec vous-meme");
+  }
+
   const learner = await prisma.user.findUnique({
     where: { id: learnerId },
     select: { id: true },
   });
   if (!learner) throw new HttpError(404, "Learner not found");
+
+  await assertNotBlocked(teacherId, learnerId);
 
   const jitsiRoomId = `skillbridge-${uuid()}`;
   const session = await prisma.teachingSession.create({
@@ -35,6 +58,8 @@ export const createSessionService = async (
     "SESSION_BOOKED",
     `Proposition de session "${title}" reçue. ${estimatedDuration} crédits requis pour accepter. Acceptez ou refusez.`
   ).catch(() => {});
+
+  emitSessionUpdate(session);
 
   return session;
 };
@@ -66,28 +91,56 @@ export const endSessionService = async (
   const teacherCreditsPaid = Math.min(minutesElapsed, session.creditsReserved);
   const learnerCreditsRefunded = session.creditsReserved - teacherCreditsPaid;
 
-  await prisma.$transaction([
-    prisma.user.update({
-      where: { id: session.teacherId },
-      data: { credits: { increment: teacherCreditsPaid } },
-    }),
-    ...(learnerCreditsRefunded > 0
-      ? [
-          prisma.user.update({
-            where: { id: session.learnerId },
-            data: { credits: { increment: learnerCreditsRefunded } },
-          }),
-        ]
-      : []),
-    prisma.teachingSession.update({
+  // grantCredits caps at MAX_CREDITS; a raw increment would break the
+  // "User_credits_bounds_check" constraint and roll back the whole settlement.
+  await prisma.$transaction(async (tx) => {
+    /**
+     * Claims the session before paying anyone.
+     *
+     * The status was read outside this transaction, and the update below did
+     * not re-check it — so two clients ending the same session at once could
+     * both pass the check above and both settle it, paying the teacher twice.
+     * Moving the transition first, guarded on the status we read, makes the
+     * loser of the race fail before any credit moves.
+     */
+    const claimed = await tx.teachingSession.updateMany({
+      where: { id: sessionId, status: "ACTIVE" },
+      data: { status: "COMPLETED", actualEndedAt: new Date() },
+    });
+    if (claimed.count === 0) {
+      throw new HttpError(409, "Cette session a deja ete terminee");
+    }
+
+    // School sessions sit outside the credit economy entirely: the learner was
+    // never charged on accept, so there is nothing to settle or refund here.
+    const schoolSession = await isSchoolSession(tx, session.teacherId);
+
+    if (!schoolSession) {
+      await grantCredits(tx, session.teacherId, teacherCreditsPaid);
+
+      if (learnerCreditsRefunded > 0) {
+        await grantCredits(tx, session.learnerId, learnerCreditsRefunded);
+      }
+    }
+
+    // The transition itself was claimed above; this records what it cost.
+    await tx.teachingSession.update({
       where: { id: sessionId },
-      data: {
-        status: "COMPLETED",
-        actualEndedAt: new Date(),
-        creditsConsumed: teacherCreditsPaid,
-      },
-    }),
-  ]);
+      data: { creditsConsumed: schoolSession ? 0 : teacherCreditsPaid },
+    });
+
+    // Counted after the session is marked COMPLETED so it is included, and
+    // awarded to school teachers too — the milestone rewards teaching, not
+    // earning.
+    await grantLoyaltyRewardIfDue(tx, session.teacherId);
+  });
+
+  emitSessionUpdate({
+    id: sessionId,
+    teacherId: session.teacherId,
+    learnerId: session.learnerId,
+    status: "COMPLETED",
+  });
 
   return { teacherCreditsPaid, learnerCreditsRefunded };
 };
@@ -121,6 +174,12 @@ export const joinSessionService = async (
       where: { id: sessionId },
       data: { status: "ACTIVE", actualStartedAt: new Date() },
     });
+    emitSessionUpdate({
+      id: sessionId,
+      teacherId: session.teacherId,
+      learnerId: session.learnerId,
+      status: "ACTIVE",
+    });
   }
   return session.jitsiRoomId;
 };
@@ -143,15 +202,21 @@ export const acceptSessionService = async (
 
   // spendCredits throws 400 "User does not have enough credits" if insufficient
   const updated = await prisma.$transaction(async (tx) => {
-    await spendCredits(tx, learnerId, session.creditsReserved);
-    await tx.rewardTransaction.create({
-      data: {
-        userId: learnerId,
-        amount: session.creditsReserved,
-        type: "SPENT",
-        description: `Réservation session acceptée : "${session.title}"`,
-      },
-    });
+    // School mode has no credit economy: a lesson from a school teacher costs
+    // the student nothing, so a student with an empty balance is never turned
+    // away from their own school.
+    if (!(await isSchoolSession(tx, session.teacherId))) {
+      await spendCredits(tx, learnerId, session.creditsReserved);
+      await tx.rewardTransaction.create({
+        data: {
+          userId: learnerId,
+          amount: session.creditsReserved,
+          type: "SPENT",
+          description: `Réservation session acceptée : "${session.title}"`,
+        },
+      });
+    }
+
     return tx.teachingSession.update({
       where: { id: sessionId },
       data: { status: "SCHEDULED" },
@@ -163,6 +228,13 @@ export const acceptSessionService = async (
     "SESSION_ACCEPTED",
     `Votre session "${session.title}" a été acceptée.`
   ).catch(() => {});
+
+  emitSessionUpdate({
+    id: sessionId,
+    teacherId: session.teacherId,
+    learnerId: session.learnerId,
+    status: updated.status,
+  });
 
   return updated;
 };
@@ -200,6 +272,13 @@ export const refuseSessionService = async (
     `Votre session "${session.title}" a été refusée par l'apprenant.`
   ).catch(() => {});
 
+  emitSessionUpdate({
+    id: sessionId,
+    teacherId: session.teacherId,
+    learnerId: session.learnerId,
+    status: updated.status,
+  });
+
   return updated;
 };
 
@@ -221,13 +300,9 @@ export const createGroupSessionService = async (
   const jitsiRoomId = `skillbridge-${uuid()}`;
   return prisma.$transaction(async (tx) => {
     for (const learner of learners) {
-      if (learner.credits < estimatedDuration) {
-        throw new HttpError(400, "Learner does not have enough credits");
-      }
-      await tx.user.update({
-        where: { id: learner.id },
-        data: { credits: { decrement: estimatedDuration } },
-      });
+      // The balances read outside the transaction can be stale, so let
+      // spendCredits do the check and the debit in a single atomic write.
+      await spendCredits(tx, learner.id, estimatedDuration);
     }
 
     const session = await tx.teachingSession.create({
@@ -302,6 +377,13 @@ export const updateSessionService = async (
     `La session "${updated.title}" a été modifiée. ${updated.creditsReserved} crédits requis pour accepter. Confirmez ou refusez.`
   ).catch(() => {});
 
+  emitSessionUpdate({
+    id: sessionId,
+    teacherId: session.teacherId,
+    learnerId: session.learnerId,
+    status: updated.status,
+  });
+
   return updated;
 };
 
@@ -337,10 +419,9 @@ export const addParticipantSessionService = async (
   }
 
   return prisma.$transaction(async (tx) => {
-    await tx.user.update({
-      where: { id: userId },
-      data: { credits: { decrement: session.creditsReserved } },
-    });
+    // spendCredits re-checks the balance atomically; the read above can go stale
+    // between the check and the write when a user joins two sessions at once.
+    await spendCredits(tx, userId, session.creditsReserved);
     return tx.sessionParticipant.create({
       data: { sessionId, userId, role: "LEARNER" },
     });
@@ -370,10 +451,7 @@ export const removeParticipantSessionService = async (
   if (!existing) throw new HttpError(404, "User is not a participant");
 
   return prisma.$transaction(async (tx) => {
-    await tx.user.update({
-      where: { id: userId },
-      data: { credits: { increment: session.creditsReserved } },
-    });
+    await grantCredits(tx, userId, session.creditsReserved);
     return tx.sessionParticipant.delete({
       where: { sessionId_userId: { sessionId, userId } },
     });
@@ -405,4 +483,93 @@ export const getParticipantsSessionService = async (
       },
     },
   });
+};
+
+/**
+ * Cancels a session that has not started, from either side.
+ *
+ * This existed nowhere, and its absence trapped credits. Accepting a session
+ * debits the learner immediately; after that `refuse` refused (it only accepts
+ * PENDING_CONFIRMATION) and `end` refused (it only accepts ACTIVE), so the only
+ * way to get those credits back was to hold the session for real. The web
+ * "Annuler" button called `end` and simply failed.
+ *
+ * The refund is the whole point, so it happens in the same transaction as the
+ * status change: a cancellation that records itself without giving the credits
+ * back is the bug it replaces.
+ */
+export const cancelSessionService = async (sessionId: string, userId: string) => {
+  const session = await prisma.teachingSession.findUnique({
+    where: { id: sessionId },
+    select: {
+      id: true,
+      teacherId: true,
+      learnerId: true,
+      status: true,
+      title: true,
+      creditsReserved: true,
+    },
+  });
+  if (!session) throw new HttpError(404, "Session not found");
+
+  // Both sides may call off a session that has not begun. Only the learner
+  // could refuse before, which left the teacher no way out of a booking.
+  if (session.teacherId !== userId && session.learnerId !== userId) {
+    throw new HttpError(403, "Vous ne participez pas a cette session");
+  }
+
+  if (session.status !== "PENDING_CONFIRMATION" && session.status !== "SCHEDULED") {
+    throw new HttpError(
+      400,
+      session.status === "ACTIVE"
+        ? "Cette session a commence : terminez-la plutot que de l'annuler"
+        : "Cette session ne peut plus etre annulee"
+    );
+  }
+
+  const updated = await prisma.$transaction(async (tx) => {
+    // Only a SCHEDULED session has been paid for; a pending one never was.
+    if (session.status === "SCHEDULED") {
+      const schoolSession = await isSchoolSession(tx, session.teacherId);
+      if (!schoolSession && session.creditsReserved > 0) {
+        await grantCredits(tx, session.learnerId, session.creditsReserved);
+        await tx.rewardTransaction.create({
+          data: {
+            userId: session.learnerId,
+            amount: session.creditsReserved,
+            type: "EARNED",
+            description: `Remboursement : session "${session.title}" annulee`,
+          },
+        });
+      }
+    }
+
+    // Guarded on the status we read, so two concurrent cancellations cannot
+    // both refund.
+    const result = await tx.teachingSession.updateMany({
+      where: { id: sessionId, status: session.status },
+      data: { status: "CANCELLED" },
+    });
+    if (result.count === 0) {
+      throw new HttpError(409, "Cette session vient d'etre modifiee, reessayez");
+    }
+
+    return tx.teachingSession.findUniqueOrThrow({ where: { id: sessionId } });
+  });
+
+  const otherId = session.teacherId === userId ? session.learnerId : session.teacherId;
+  createNotificationService(
+    otherId,
+    "SESSION_REFUSED",
+    `La session "${session.title}" a ete annulee.`
+  ).catch(() => {});
+
+  emitSessionUpdate({
+    id: sessionId,
+    teacherId: session.teacherId,
+    learnerId: session.learnerId,
+    status: updated.status,
+  });
+
+  return updated;
 };
